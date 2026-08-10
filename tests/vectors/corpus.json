@@ -2054,5 +2054,13 @@
 "ds20/data/npuyo20/grp_demo/Sd8l.cns": "f9b4d5e06d06783573a15b8928801441b50617b61b5d553fa2f4bf7a994732b4",
 "ds20/data/npuyo20/grp_demo/Sd8r.cns": "e7288fb6d0ae3e1fa43793efa1885326f8a5f13630bcbc4b56bbdf43c21e2831",
 "ds20/data/npuyo20/grp_demo/Sd9l.cns": "0d98e3dfc18d5726dbe934fb91b08a5959081cd8165ea8f7a15b52c7d622cdc7",
-"ds20/data/npuyo20/grp_demo/Sd9r.cns": "45b341c13d4096f01fc10778b9ef9df6daec7065171c43bdbd73fda5e92a44fc"
+"ds20/data/npuyo20/grp_demo/Sd9r.cns": "45b341c13d4096f01fc10778b9ef9df6daec7065171c43bdbd73fda5e92a44fc",
+"pc98:ds10/data/MAIN_DAT/AAA.CNS": "12a7fd9842e6f09443c3bab20982e76debf5ee1ffbcc975e542cf0aea2f6f36e",
+"pc98:ds10/data/MAIN_DAT/DS10_T.CNS": "d75725c44ccb2551232ac495beb0a077f4df9994592164e4651cd0917cbf1bcd",
+"pc98:ds10/data/MAIN_DAT/MENU101.CNS": "2504135a9dd6a2cf6cde9aed6b6819ffc87bcef0c5bff8cb6de60529ce505006",
+"pc98:ds8/data/AAA.CNS": "12a7fd9842e6f09443c3bab20982e76debf5ee1ffbcc975e542cf0aea2f6f36e",
+"pc98:ds8/data/DS08_T.CNS": "3832b0ce138da6dbb32c24075259ec6ce07c1af342436fa2cf3795cc88067df0",
+"pc98:ds8/data/MENU081.CNS": "305ad3b404e71321322f6f603a47341d7585584389bd01b9d90a6afe75fe1425",
+"pc98:ds8/data/MENU082.CNS": "9f641ad23f636627d49b7cf3252f31735bb59d128a3d67536e02f061aa7e2a3c",
+"pc98:ds8/data/MENU083.CNS": "12febd3dd0cfd63c7ec9198b43f4cf3d77d1388f78e495f99633a1ef8013ad62"
 }

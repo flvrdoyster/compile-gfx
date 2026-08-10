@@ -84,7 +84,7 @@ compilegfx.to_png(planar.to_bitmap(buf, pal), "out.png")
 
 ```bash
 pytest tests/test_codecs.py                    # 게임 데이터 불필요
-COMPILE_GFX_CORPUS=<추출본 경로> pytest         # + 2,056개 파일 회귀
+COMPILE_GFX_CORPUS=<추출본 경로> pytest         # + 2,064개 파일 회귀
 ```
 
 `tests/vectors/corpus.json`은 해시만 담고 있어 로컬에 있는 파일만 대조함.
