@@ -99,6 +99,60 @@ def read_menu_com(data: bytes, suffix: bytes = b".CNS") -> dict:
         at = end
 
 
+def read_script_stream(data: bytes, offset: int):
+    """One [reg][R][G][B]... run at `offset`, terminated by a 0xFF register.
+
+    This is the 幻世 series' *other* palette source, used by the in-game
+    script interpreter rather than the Disc Station launcher -- found by
+    disassembling 幻世快盗伝's palette-apply routine (kaitou `DISK_B.DAT`
+    chunk 0, `GSC.COM`-loaded, at offset 0x612B) and matching its exact
+    read pattern: select register, write R, write G, write B, repeat.
+
+    Registers need not be sequential or complete -- a scene can set only
+    the handful its art actually uses (幻世快盗伝's title screen sets just
+    3 of 16). Returns `{register: (r, g, b)}`, empty if `offset` isn't the
+    start of a valid, terminated run.
+    """
+    entries = {}
+    i, n = offset, len(data)
+    while i < n:
+        reg = data[i]
+        if reg == 0xFF:
+            return entries
+        if reg > 15 or i + 4 > n or any(b > 0x0F for b in data[i + 1:i + 4]):
+            return {}
+        entries[reg] = rgb444(data, i + 1, count=1)[0]
+        i += 4
+    return {}
+
+
+def find_script_palettes(data: bytes, min_entries: int = 2):
+    """Every terminated read_script_stream() run in `data`.
+
+    There is no directory to walk -- this is scanned out of raw script
+    bytecode -- so it returns every candidate as (offset, {reg: (r,g,b)})
+    rather than a name-keyed table. **Which candidate belongs to which
+    on-screen image isn't recoverable by scanning alone**: that mapping
+    only exists in the interpreter's runtime control flow. Use this to
+    narrow candidates, then match by eye (or by cross-checking which
+    registers a decoded image's pixels actually use) against the real
+    picture.
+    """
+    runs = []
+    i, n = 0, len(data)
+    while i + 4 <= n:
+        if not (data[i] <= 15 and all(b <= 0x0F for b in data[i + 1:i + 4])):
+            i += 1
+            continue
+        entries = read_script_stream(data, i)
+        if len(entries) >= min_entries:
+            runs.append((i, entries))
+            i += 4 * len(entries) + 1
+        else:
+            i += 1
+    return runs
+
+
 def read_menu_dat(data: bytes, suffix: bytes = b".CNS") -> dict:
     """{upper-case filename: [(r, g, b)] * 16} from a MENU.DAT-style table."""
     table = {}

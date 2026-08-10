@@ -27,7 +27,8 @@ vol.10에서는 DOS 플레이너 이미지로 전혀 다름.
 + **`src/compilegfx/codec/`** — 압축 코덱. `gcn`(Windows LZ) · `cnx`(2비트 태그) ·
 `pc98lz`(DOS/PC-98 LZ, 압축기 포함) · `pc98rle`.
 + **`src/compilegfx/container/`** — 페이로드 해석. `header8`(구형 8바이트 헤더) ·
-`gmp200` · `planar`(PC-98 비트플레인) · `palette`(외부 팔레트 테이블).
+`gmp200` · `planar`(PC-98 비트플레인) · `palette`(외부/스크립트 팔레트 테이블) ·
+`chunked`(幻世 시리즈 청크 테이블) · `tilesheet`(256타일 5플레인 스프라이트시트).
 + **`src/compilegfx/`** — `detect.py`(내용 기반 판별) · `image.py`(`Bitmap` 타입·PNG 출력) ·
 `cli.py`.
 + **`tests/`** — 코덱 단위 테스트와 실제 디스크 대조 회귀. 게임 데이터는 저장소에 없고
