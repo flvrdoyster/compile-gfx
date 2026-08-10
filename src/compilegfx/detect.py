@@ -10,16 +10,18 @@ magic at all and need an external palette, so they go through the planar and
 palette modules explicitly rather than being guessed at here.
 """
 from .codec import cnx, gcn
-from .container import gmp200, header8
+from .container import gmp200, header8, tilemap
 from .image import Bitmap
 
 
 class NotAnImage(Exception):
     """A graphics extension wrapping something else entirely.
 
-    Both known cases are on vol.20 and are worth keeping rather than fixing:
-    a plain Shift-JIS staff note (kaihatu.cns) and a nazopuyo puzzle data
-    file (nazopuyo.cnx).
+    vol.20 has two: a plain Shift-JIS staff note (kaihatu.cns) and a
+    nazopuyo puzzle data file (nazopuyo.cnx). 幻世水滸伝 has far more --
+    200 of GENSE.FLD's 377 `.cns` entries are tile maps rather than
+    pictures, and they are the reason `header8` checks its leading zeros
+    now: without that they decoded to noise instead of raising.
     """
 
 
@@ -52,4 +54,8 @@ def load(raw: bytes, path_hint: str = "") -> Bitmap:
         raise NotAnImage(f".cnx without CNX magic (starts {raw[:8]!r})")
 
     dec = gcn.decompress(raw)
-    return gmp200.parse(dec) if gmp200.is_gmp200(dec) else header8.parse(dec)
+    if gmp200.is_gmp200(dec):
+        return gmp200.parse(dec)
+    if tilemap.looks_like_tilemap(dec):
+        raise NotAnImage("tile map grid, not a picture")
+    return header8.parse(dec)

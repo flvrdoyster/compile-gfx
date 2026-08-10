@@ -5,7 +5,7 @@ import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
-from compilegfx.container import chunked, palette, tilesheet
+from compilegfx.container import chunked, fld, header8, palette, tilemap, tilesheet
 
 DECOY = bytes([0x0F] * palette.PALETTE_BYTES)                     # all white
 REAL = bytes(b for i in range(16) for b in (i, i, i))             # a ramp
@@ -171,6 +171,76 @@ def test_tilesheet_decode_plane0_is_a_transparency_mask():
 def test_tilesheet_decode_rejects_partial_tiles():
     try:
         tilesheet.decode(b"\x00" * (tilesheet.TILE_BYTES - 1), TILE_PAL)
+        assert False, "expected ValueError"
+    except ValueError:
+        pass
+
+
+# ── tile maps vs images (幻世水滸伝 ships both as .cns) ──────────────────────
+
+def _tilemap(width=3, height=2):
+    cells = width * height
+    return struct.pack(f"<HH{cells * 2}H", width, height, *range(cells * 2))
+
+
+def _header8_image(width=4, height=2, colours=2):
+    """A minimal valid header8 payload: two zero bytes, then the fields."""
+    body = struct.pack("<HHH", width, height, colours - 1)
+    return b"\x00\x00" + body + b"\x00" * (colours * 4) + b"\x00" * (width * height)
+
+
+def test_tilemap_is_recognised_by_its_exact_size():
+    assert tilemap.looks_like_tilemap(_tilemap())
+    assert not tilemap.looks_like_tilemap(_tilemap() + b"\x00")   # one byte over
+
+
+def test_tilemap_parse_splits_the_two_grids():
+    width, height, tiles, attrs = tilemap.parse(_tilemap(3, 2))
+    assert (width, height) == (3, 2)
+    assert tiles == [0, 1, 2, 3, 4, 5]
+    assert attrs == [6, 7, 8, 9, 10, 11]
+
+
+def test_header8_requires_its_two_leading_zeros():
+    # a tile map opens with its width, which header8 used to read straight
+    # past -- parsing the grid as an image made of noise
+    assert header8.looks_like_header8(_header8_image())
+    assert not header8.looks_like_header8(_tilemap(21, 17))
+    try:
+        header8.parse(_tilemap(21, 17))
+        assert False, "expected ValueError"
+    except ValueError:
+        pass
+
+
+# ── FLD archives (幻世水滸伝's GENSE.FLD) ────────────────────────────────────
+
+def _fld(*members):
+    table = b""
+    body = b""
+    offset = fld.HEADER_BYTES + len(members) * fld.ENTRY_BYTES
+    for name, payload in members:
+        table += name.encode("ascii").ljust(fld.NAME_BYTES, b"\x00")
+        table += struct.pack("<II", offset + len(body), len(payload))
+        body += payload
+    return fld.MAGIC + struct.pack("<I", len(members)) + table + body
+
+
+def test_fld_entries_and_read():
+    blob = _fld(("a.cns", b"AAA"), ("b.cns", b"BBBB"))
+    assert [(n, s) for n, _, s in fld.entries(blob)] == [("a.cns", 3), ("b.cns", 4)]
+    assert fld.read(blob, "a.cns") == b"AAA"
+    assert fld.read(blob, "B.CNS") == b"BBBB", "names match case-insensitively"
+
+
+def test_fld_iter_members_keeps_table_order():
+    blob = _fld(("a.cns", b"AAA"), ("b.cns", b"BBBB"))
+    assert list(fld.iter_members(blob)) == [("a.cns", b"AAA"), ("b.cns", b"BBBB")]
+
+
+def test_fld_rejects_other_files():
+    try:
+        fld.entries(b"NOTANFLD" + b"\x00" * 16)
         assert False, "expected ValueError"
     except ValueError:
         pass

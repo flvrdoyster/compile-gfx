@@ -28,7 +28,8 @@ vol.10에서는 DOS 플레이너 이미지로 전혀 다름.
 `pc98lz`(DOS/PC-98 LZ, 압축기 포함) · `pc98rle`.
 + **`src/compilegfx/container/`** — 페이로드 해석. `header8`(구형 8바이트 헤더) ·
 `gmp200` · `planar`(PC-98 비트플레인) · `palette`(외부/스크립트 팔레트 테이블) ·
-`chunked`(幻世 시리즈 청크 테이블) · `tilesheet`(256타일 5플레인 스프라이트시트).
+`chunked`(幻世 시리즈 청크 테이블) · `tilesheet`(256타일 5플레인 스프라이트시트) ·
+`fld`(水滸伝 아카이브) · `tilemap`(이미지가 아닌 격자 데이터 판별).
 + **`src/compilegfx/`** — `detect.py`(내용 기반 판별) · `image.py`(`Bitmap` 타입·PNG 출력) ·
 `cli.py`.
 + **`tests/`** — 코덱 단위 테스트와 실제 디스크 대조 회귀. 게임 데이터는 저장소에 없고
@@ -53,6 +54,7 @@ PNG까지 쓰려면 `pip install "compile-gfx[png] @ git+https://github.com/flvr
 compile-gfx one   MAIN14.GCN out.png
 compile-gfx batch ds14/data  ds14/png     # 트리 전체, 폴더 구조 그대로
 compile-gfx pc98  ds10/data/MAIN_DAT ds10/png
+compile-gfx fld   suiko/GENSE.FLD suiko/png        # 水滸伝 아카이브 통째로
 compile-gfx palettes kaitou/DISK_B.DAT --chunk 1   # 幻世 게임 본편 팔레트 스캔
 ```
 
@@ -90,7 +92,7 @@ compilegfx.to_png(planar.to_bitmap(buf, pal), "out.png")
 
 ```bash
 pytest tests/test_codecs.py                    # 게임 데이터 불필요
-COMPILE_GFX_CORPUS=<추출본 경로> pytest         # + 2,064개 파일 회귀
+COMPILE_GFX_CORPUS=<추출본 경로> pytest         # + 2,051개 파일 회귀
 ```
 
 `tests/vectors/corpus.json`은 해시만 담고 있어 로컬에 있는 파일만 대조함.

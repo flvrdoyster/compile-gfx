@@ -1,6 +1,12 @@
 """The older 8-byte payload header (.GCN / .CNS / .CNU and some .DAT).
 
-    [2B unknown][u16 width][u16 height][u16 palCount - 1][palette][rows]
+    [2B zero][u16 width][u16 height][u16 palCount - 1][palette][rows]
+
+Those first two bytes are always zero -- all 1471 header8 payloads across
+ds12/ds14/ds20 have them, as do 幻世水滸伝's. Treating them as "unknown and
+therefore ignorable" is what let tile maps through: those open with their
+width, and the fields that land in width/height/palCount are plausible
+often enough to parse as an image made of noise. See `container.tilemap`.
 
 The palette count is an explicit field. Do NOT derive it from the file size:
 that happens to work for 8bpp images and silently breaks every 4bpp one,
@@ -16,7 +22,20 @@ import struct
 from ..image import Bitmap
 
 
+def looks_like_header8(dec: bytes) -> bool:
+    """Cheap gate before parse(): the two leading zeros and sane fields."""
+    if len(dec) < 8 or dec[0:2] != b"\x00\x00":
+        return False
+    width, height = struct.unpack_from("<HH", dec, 2)
+    pal_count = struct.unpack_from("<H", dec, 6)[0] + 1
+    return width > 0 and height > 0 and 1 <= pal_count <= 256
+
+
 def parse(dec: bytes) -> Bitmap:
+    if len(dec) < 8:
+        raise ValueError(f"too short for an 8-byte header ({len(dec)} bytes)")
+    if dec[0:2] != b"\x00\x00":
+        raise ValueError(f"header does not start with two zero bytes ({dec[0:2]!r})")
     width, height = struct.unpack_from("<HH", dec, 2)
     pal_count = struct.unpack_from("<H", dec, 6)[0] + 1
     if width <= 0 or height <= 0:

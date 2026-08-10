@@ -3,6 +3,7 @@
     compile-gfx one      <file> <out.png>
     compile-gfx batch    <src dir> <out dir>
     compile-gfx pc98     <MAIN_DAT dir> <out dir>   # Disc Station vol.10
+    compile-gfx fld      <GENSE.FLD> <out dir>      # 幻世水滸伝 archive
     compile-gfx palettes <DISK_B.DAT>               # 幻世 series, in-game
 
 `one` and `batch` detect the format from the bytes, so they cover every
@@ -20,7 +21,7 @@ import sys
 
 from . import load, to_png
 from .codec import pc98lz
-from .container import chunked
+from .container import chunked, fld
 from .container import palette as palette_mod
 from .container import planar
 from .detect import NotAnImage
@@ -170,6 +171,34 @@ def cmd_pc98(args):
     return 0
 
 
+def cmd_fld(args):
+    data = open(args.src, "rb").read()
+    if args.list:
+        for name, _, size in fld.entries(data):
+            print(f"  {name:14s} {size:>9,}")
+        print(f"{len(fld.entries(data))} entries")
+        return 0
+
+    ok = 0
+    skipped = []
+    for name, member in fld.iter_members(data):
+        dest = os.path.join(args.dest, os.path.splitext(name)[0] + ".png")
+        try:
+            bmp = load(member, name)
+            to_png(bmp, dest)
+            print(f"  {name:14s} {bmp.width}x{bmp.height} {bmp.bpp}bpp")
+            ok += 1
+        except NotAnImage as e:
+            skipped.append((name, str(e)))
+        except Exception as e:
+            skipped.append((name, f"{type(e).__name__}: {e}"))
+
+    print(f"OK={ok} SKIPPED={len(skipped)}")
+    for name, why in skipped:
+        print(f"  skipped {name}: {why}")
+    return 0
+
+
 def cmd_palettes(args):
     data = open(args.src, "rb").read()
     total = 0
@@ -211,6 +240,12 @@ def main(argv=None):
     p.add_argument("dest")
     p.add_argument("--palette", help="palette table (default: <src>/MENU.DAT)")
     p.set_defaults(func=cmd_pc98)
+
+    p = sub.add_parser("fld", help="convert an FLD archive's members")
+    p.add_argument("src", help="a GENSE.FLD-style archive")
+    p.add_argument("dest", nargs="?", default=".")
+    p.add_argument("--list", action="store_true", help="list members instead")
+    p.set_defaults(func=cmd_fld)
 
     p = sub.add_parser("palettes",
                        help="scan a chunked DAT for script-embedded palettes")
