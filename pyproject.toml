@@ -1,0 +1,15 @@
+[project]
+name = "compile-gfx"
+version = "0.1.0"
+description = "Decoders for Compile's Disc Station / PC-98 graphics formats"
+requires-python = ">=3.9"
+
+[project.optional-dependencies]
+png = ["pillow"]
+
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
