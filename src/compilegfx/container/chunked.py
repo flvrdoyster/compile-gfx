@@ -17,10 +17,15 @@ ENTRY_BYTES = 4
 
 
 def chunk_offsets(data: bytes):
-    """Every non-zero seek in the table, ascending, plus EOF as the last entry.
+    """Every non-zero seek in the table, ascending, ending at the EOF boundary.
 
-    The trailing EOF entry is a boundary marker, not a real chunk -- a file
-    with N chunks returns N+1 offsets.
+    The last entry is a boundary, not a chunk -- a file with N chunks
+    returns N+1 offsets, so chunk `i` spans `offsets[i]:offsets[i+1]`.
+
+    Real files already store that boundary as the table's final entry
+    (torimono and kaitou's DISK_C.DAT both do), so EOF is only appended
+    when the table doesn't reach it. Appending unconditionally would
+    duplicate it and invent a trailing zero-length chunk.
     """
     seeks = []
     for off in range(0, TABLE_BYTES, ENTRY_BYTES):
@@ -29,7 +34,8 @@ def chunk_offsets(data: bytes):
         if seek:
             seeks.append(seek)
     seeks = sorted(set(seeks))
-    seeks.append(len(data))
+    if not seeks or seeks[-1] < len(data):
+        seeks.append(len(data))
     return seeks
 
 

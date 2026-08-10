@@ -1,13 +1,18 @@
 """Command line front end.
 
-    compile-gfx one   <file> <out.png>
-    compile-gfx batch <src dir> <out dir>
-    compile-gfx pc98  <MAIN_DAT dir> <out dir>     # Disc Station vol.10
+    compile-gfx one      <file> <out.png>
+    compile-gfx batch    <src dir> <out dir>
+    compile-gfx pc98     <MAIN_DAT dir> <out dir>   # Disc Station vol.10
+    compile-gfx palettes <DISK_B.DAT>               # 幻世 series, in-game
 
 `one` and `batch` detect the format from the bytes, so they cover every
 Windows-era file regardless of extension. vol.10's DOS files carry no magic
 and keep their palettes in a separate table, so they get their own
 subcommand rather than being guessed at.
+
+`palettes` reports candidates, not answers: which run belongs to which
+screen lives in the interpreter's control flow, not the data. See
+`container.palette.find_script_palettes`.
 """
 import argparse
 import os
@@ -15,6 +20,7 @@ import sys
 
 from . import load, to_png
 from .codec import pc98lz
+from .container import chunked
 from .container import palette as palette_mod
 from .container import planar
 from .detect import NotAnImage
@@ -164,6 +170,27 @@ def cmd_pc98(args):
     return 0
 
 
+def cmd_palettes(args):
+    data = open(args.src, "rb").read()
+    total = 0
+    for index, raw in chunked.iter_chunks(data):
+        if args.chunk is not None and index != args.chunk:
+            continue
+        try:
+            dec = pc98lz.decompress_stream(raw)[0]
+        except Exception:
+            continue
+        for offset, entries in palette_mod.find_script_palettes(dec, args.min_entries):
+            total += 1
+            regs = ",".join(str(r) for r in sorted(entries))
+            print(f"chunk {index:3d} @{offset:#07x}  registers [{regs}]")
+            for reg in sorted(entries):
+                r, g, b = entries[reg]
+                print(f"    {reg:2d}: {r:3d},{g:3d},{b:3d}")
+    print(f"{total} candidate(s)")
+    return 0
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(prog="compile-gfx", description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -184,6 +211,14 @@ def main(argv=None):
     p.add_argument("dest")
     p.add_argument("--palette", help="palette table (default: <src>/MENU.DAT)")
     p.set_defaults(func=cmd_pc98)
+
+    p = sub.add_parser("palettes",
+                       help="scan a chunked DAT for script-embedded palettes")
+    p.add_argument("src", help="a DISK_B.DAT / DISK_C.DAT-style chunked file")
+    p.add_argument("--chunk", type=int, help="scan only this chunk")
+    p.add_argument("--min-entries", type=int, default=2,
+                   help="ignore runs setting fewer registers than this (default 2)")
+    p.set_defaults(func=cmd_palettes)
 
     args = ap.parse_args(argv)
     return args.func(args)
