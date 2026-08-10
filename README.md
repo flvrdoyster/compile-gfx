@@ -15,7 +15,7 @@ Compile 게임의 자체 그래픽 포맷을 PNG로 디코딩하는 파이썬 �
 | `.GCN` `.CNS` `.CNU` | GCN 토큰 스트림 | 8바이트 (구형) | 디스크스테이션 vol.12·14·20 |
 | `.GCS` | GCN 토큰 스트림 | `GMP-200` | vol.20 `DSMENU` |
 | `.GMP` | 없음 (생 데이터) | `GMP-200` | vol.14 `MADOADV` |
-| `.CNX` | 2비트 태그 | `GMP-200` | vol.20 `haiyuki` |
+| `.CNX` | 2비트 태그 | `GMP-200` | vol.20 (패유기·comet·PuyoEd20) |
 | `.CNS` (vol.10) | Compile PC-98 LZ | PC-98 플레이너 | 디스크스테이션 vol.10 |
 | `.CND` | PC-98 RLE | PC-98 플레이너 | 미검증 (해당 파일 없음) |
 
@@ -28,8 +28,8 @@ vol.10에서는 DOS 플레이너 이미지로 전혀 다름.
 `pc98lz`(DOS/PC-98 LZ, 압축기 포함) · `pc98rle`.
 + **`src/compilegfx/container/`** — 페이로드 해석. `header8`(구형 8바이트 헤더) ·
 `gmp200` · `planar`(PC-98 비트플레인) · `palette`(외부/스크립트 팔레트 테이블) ·
-`chunked`(幻世 시리즈 청크 테이블) · `tilesheet`(256타일 5플레인 스프라이트시트) ·
-`fld`(水滸伝 아카이브) · `tilemap`(이미지가 아닌 격자 데이터 판별).
+`chunked`(환세 시리즈 청크 테이블) · `tilesheet`(256타일 5플레인 스프라이트시트) ·
+`fld`(취호전 아카이브) · `tilemap`(이미지가 아닌 격자 데이터 판별).
 + **`src/compilegfx/`** — `detect.py`(내용 기반 판별) · `image.py`(`Bitmap` 타입·PNG 출력) ·
 `cli.py`.
 + **`tests/`** — 코덱 단위 테스트와 실제 디스크 대조 회귀. 게임 데이터는 저장소에 없고
@@ -54,8 +54,8 @@ PNG까지 쓰려면 `pip install "compile-gfx[png] @ git+https://github.com/flvr
 compile-gfx one   MAIN14.GCN out.png
 compile-gfx batch ds14/data  ds14/png     # 트리 전체, 폴더 구조 그대로
 compile-gfx pc98  ds10/data/MAIN_DAT ds10/png
-compile-gfx fld   suiko/GENSE.FLD suiko/png        # 水滸伝 아카이브 통째로
-compile-gfx chunks   kaitou/DISK_C.DAT kaitou/png  # 幻世 게임 본편 그래픽
+compile-gfx fld   suiko/GENSE.FLD suiko/png        # 취호전 아카이브 통째로
+compile-gfx chunks   kaitou/DISK_C.DAT kaitou/png  # 환세 시리즈 게임 본편
 compile-gfx palettes kaitou/DISK_B.DAT --chunk 1   # 그 팔레트 후보 스캔
 ```
 
@@ -65,7 +65,7 @@ compile-gfx palettes kaitou/DISK_B.DAT --chunk 1   # 그 팔레트 후보 스캔
 
 vol.10은 매직이 없고 팔레트를 `MAIN_DAT/MENU.DAT`에서 따로 가져오므로 `pc98`을 씀.
 
-`chunks`는 幻世 시리즈 게임 본편의 청크형 `DAT`에서 그래픽을 뽑음. 타일시트와 전체 화면이
+`chunks`는 환세 시리즈 게임 본편의 청크형 `DAT`에서 그래픽을 뽑음. 타일시트와 전체 화면이
 한 파일에 섞여 있는데 **스트림 개수로 구분**함 — 화면은 플레인 4개가 각각 스트림이고
 타일시트는 단일 블록. (크기로는 구분 못 함: 32,000바이트 플레인이 160으로 나누어떨어져
 타일 200개처럼 보임.)
