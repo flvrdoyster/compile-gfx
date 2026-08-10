@@ -111,6 +111,14 @@ def cmd_pc98(args):
     if not table:
         print(f"{menu_dat} holds no palettes", file=sys.stderr)
         return 2
+
+    # Images MENU.DAT doesn't list may still have a palette of their own,
+    # kept inside the menu binary; borrowing a neighbour's is badly wrong.
+    menu_com = os.path.join(os.path.dirname(menu_dat), "MENU.COM")
+    if os.path.exists(menu_com):
+        for name, pal in palette_mod.read_menu_com(open(menu_com, "rb").read()).items():
+            table.setdefault(name, pal)
+
     fallback = next(iter(table.values()))
 
     ok = 0

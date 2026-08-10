@@ -1,13 +1,31 @@
 """External palettes -- the DOS-era formats keep them out of the image file.
 
-Disc Station vol.10's MAIN_DAT/MENU.DAT is a table of
+Disc Station's MAIN_DAT/MENU.DAT is a small resource file: 16 bytes of
+header ("DiscStation#NN" plus a Shift-JIS disc digit), a table of u16
+offsets, then the resources those offsets point at -- loader command lines,
+image filenames, and 16-colour palettes.
 
-    filename\\0  +  one flag byte  +  48 bytes (16 colours, RGB444)
+An image takes three consecutive slots: its filename, a one-byte flag, and
+its palette. **Pair a name with its palette through the table, never by
+what physically follows it.** vol.8 disc 3 stores a second, unused palette
+immediately after the flag byte, so the palette adjacent to MENU083.CNS is
+not the one the menu draws with. Taking the adjacent one recolours the
+whole screen *and* exposes a bitplane the real palette exists to hide:
+these menus keep an illustration in plane 2 and repeat colours 0-3 at 4-7
+so that plane cannot show through.
 
 Each nibble scales by 17 to reach 8-bit. **Channel order is R,G,B** despite
 PC-98 palette registers conventionally being G,R,B -- reading it the "PC-98
 way" produces a plausible-looking but wrong image.
 """
+import struct
+
+TABLE_OFFSET = 0x10
+PALETTE_BYTES = 48        # 16 colours, RGB444, one nibble per channel
+PALETTE_SLOT = 2          # slots run: filename, flag, palette
+
+# what a DOS-era Compile filename is made of, for scanning a name backwards
+NAME_CHARS = frozenset(b"ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-")
 
 
 def rgb444(data: bytes, offset: int = 0, count: int = 16):
@@ -19,21 +37,82 @@ def rgb444(data: bytes, offset: int = 0, count: int = 16):
     ]
 
 
+def slot_table(data: bytes):
+    """The u16 offset table, or [] if this isn't a MENU.DAT-shaped file.
+
+    The file describes its own table length: resources start where the
+    table ends, so the first entry points just past the last one.
+    """
+    if len(data) < TABLE_OFFSET + 2:
+        return []
+    first = struct.unpack_from("<H", data, TABLE_OFFSET)[0]
+    if not TABLE_OFFSET < first <= len(data):
+        return []
+    count = (first - TABLE_OFFSET) // 2
+    if not 1 <= count <= 64:
+        return []
+    return list(struct.unpack_from(f"<{count}H", data, TABLE_OFFSET))
+
+
+def _palette_at(data: bytes, offset: int):
+    """rgb444 at `offset`, or None if those bytes can't be a palette.
+
+    Every channel is a nibble, so a byte above 0x0F rules the run out.
+    """
+    if offset <= 0 or offset + PALETTE_BYTES > len(data):
+        return None
+    if any(b > 0x0F for b in data[offset:offset + PALETTE_BYTES]):
+        return None
+    return rgb444(data, offset)
+
+
+def read_menu_com(data: bytes, suffix: bytes = b".CNS") -> dict:
+    """{upper-case filename: [(r, g, b)] * 16} embedded in MENU.COM itself.
+
+    Not every image is listed in MENU.DAT -- vol.8 and vol.10 both keep
+    AAA.CNS's palette inside the menu binary instead, and rendering it with
+    some other image's palette is silently, badly wrong.
+
+    The record here is **name, NUL, then the palette**, with none of the
+    flag byte MENU.DAT puts in between. There is no table to walk in an
+    executable, so records are found by scanning; the 48 nibble-only bytes
+    a real palette needs make a false hit unlikely.
+
+    The name is read backwards from the suffix, which is why NAME_CHARS is
+    narrower than DOS allows: vol.10 parks Shift-JIS help text right up
+    against AAA.CNS, ending in bytes ('@', '$') that are legal in a DOS
+    name and would otherwise be swallowed into it.
+    """
+    table = {}
+    at = 0
+    while True:
+        at = data.find(suffix.upper() + b"\x00", at)
+        if at < 0:
+            return table
+        end = at + len(suffix)
+        start = at
+        while start > 0 and data[start - 1] in NAME_CHARS and at - start < 8:
+            start -= 1
+        pal = _palette_at(data, end + 1)
+        if pal and start < at:
+            table[data[start:end].decode("ascii", "replace").upper()] = pal
+        at = end
+
+
 def read_menu_dat(data: bytes, suffix: bytes = b".CNS") -> dict:
     """{upper-case filename: [(r, g, b)] * 16} from a MENU.DAT-style table."""
     table = {}
-    i = 0
-    while True:
-        j = data.find(suffix, i)
-        if j < 0:
-            break
-        start = j
-        while start > 0 and 0x20 <= data[start - 1] <= 0x7E:
-            start -= 1
-        name = data[start:j + len(suffix)].decode("ascii", "replace").upper()
-        pal_off = j + len(suffix) + 1 + 1     # skip the suffix, its NUL, the flag
-        pal = data[pal_off:pal_off + 48]
-        if len(pal) == 48 and all(b <= 0x0F for b in pal):
-            table[name] = rgb444(pal)
-        i = j + len(suffix)
+    slots = slot_table(data)
+    for i, offset in enumerate(slots[:len(slots) - PALETTE_SLOT]):
+        if not 0 < offset < len(data):
+            continue
+        end = data.find(b"\x00", offset)
+        if end < 0:
+            continue
+        name = data[offset:end]
+        if not name.upper().endswith(suffix.upper()):
+            continue
+        pal = _palette_at(data, slots[i + PALETTE_SLOT])
+        if pal:
+            table[name.decode("ascii", "replace").upper()] = pal
     return table
