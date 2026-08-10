@@ -3,6 +3,10 @@
 Decoders for Compile's graphics formats — Disc Station (PC/Windows and DOS
 eras) and the PC-98 幻世 / 水滸伝 titles.
 
+Written for preservation and fan-translation work. **No game data is
+included here** — this is format documentation and code only. You need your
+own copies of the discs for any of it to be useful.
+
 **Extraction only, on purpose.** Each patch project keeps its own
 reinsertion layer: fitting an exact byte budget, rebuilding archives,
 injecting into disk images, pointer tables, font slots. What lives here is
@@ -17,7 +21,33 @@ zero" rule and crashed on a real file. Each had a bug the other didn't.
 The encoders therefore live here beside their decoders too, so the two
 directions of one opcode table can't diverge.
 
-## Use
+## Install
+
+```bash
+pip install git+https://github.com/flvrdoyster/compile-gfx
+```
+
+PNG output needs Pillow: `pip install "compile-gfx[png] @ git+https://github.com/flvrdoyster/compile-gfx"`.
+The decoders themselves are pure standard library, so you can use them
+without it.
+
+## Command line
+
+```bash
+compile-gfx one   MAIN14.GCN out.png
+compile-gfx batch ds14/data  ds14/png     # whole tree, structure mirrored
+compile-gfx pc98  ds10/data/MAIN_DAT ds10/png
+```
+
+`batch` detects each file from its bytes, so it handles every Windows-era
+format in one pass. It reports three counts: converted, *skipped* (files
+with a graphics extension that aren't images — vol.20 has two, a staff note
+and a puzzle file), and *failed* (anything genuinely unexpected).
+
+vol.10 needs `pc98` instead: those files carry no magic and take their
+palette from `MAIN_DAT/MENU.DAT`.
+
+## Use as a library
 
 ```python
 import compilegfx
@@ -76,3 +106,19 @@ No disc data is committed. `tests/vectors/corpus.json` holds only hashes of
 decoded output, checked against whatever files you have locally.
 Regenerate with `python tests/make_manifest.py <corpus>` — but only when a
 change is *meant* to alter output.
+
+## Credits
+
+The formats were worked out from a mix of disassembly and prior art:
+
+- **mkjpg**'s `cns110.exe` and `cnx106.exe` (2005) — standalone CNS→BMP and
+  CNX→BMP converters. Disassembling `cnx106.exe` is what produced the CNX
+  2-bit-tag codec here, and its changelog was the first hint at the shape of
+  the tag stream.
+- Disc Station vol.14's `DSMENU.EXE` and vol.10's `MENU.COM` — the Windows
+  LZ opcode table, the PC-98 LZ, the RLE, and the codec/plane-mask byte all
+  come from those.
+- [gensei-pc98](https://github.com/flvrdoyster/gensei-pc98) — the PC-98 LZ
+  and the planar layout, cross-checked against this.
+- [suiko-web-v2](https://github.com/flvrdoyster/suiko-web-v2) — the CNS
+  palette-count field and the 4bpp split, independently derived there first.
