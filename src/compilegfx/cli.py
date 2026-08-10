@@ -4,7 +4,8 @@
     compile-gfx batch    <src dir> <out dir>
     compile-gfx pc98     <MAIN_DAT dir> <out dir>   # Disc Station vol.10
     compile-gfx fld      <GENSE.FLD> <out dir>      # 幻世水滸伝 archive
-    compile-gfx palettes <DISK_B.DAT>               # 幻世 series, in-game
+    compile-gfx chunks   <DISK_C.DAT> <out dir>     # 幻世 series, in-game
+    compile-gfx palettes <DISK_B.DAT>               # its palettes
 
 `one` and `batch` detect the format from the bytes, so they cover every
 Windows-era file regardless of extension. vol.10's DOS files carry no magic
@@ -23,7 +24,7 @@ from . import load, to_png
 from .codec import pc98lz
 from .container import chunked, fld
 from .container import palette as palette_mod
-from .container import planar
+from .container import planar, tilesheet
 from .detect import NotAnImage
 
 EXTS = (".gcn", ".cns", ".cnx", ".gcs", ".gmp", ".cnu", ".dat")
@@ -199,6 +200,67 @@ def cmd_fld(args):
     return 0
 
 
+def _parse_palette_arg(text):
+    """"r,g,b,r,g,b,..." (16 colours) -> [(r, g, b)] * 16."""
+    parts = [int(v) for v in text.replace(" ", "").split(",") if v != ""]
+    if len(parts) != 48:
+        raise ValueError(f"need 48 numbers (16 RGB triples), got {len(parts)}")
+    return [tuple(parts[i:i + 3]) for i in range(0, 48, 3)]
+
+
+def cmd_chunks(args):
+    data = open(args.src, "rb").read()
+    pal = _parse_palette_arg(args.palette) if args.palette else tilesheet.DEFAULT_PALETTE
+
+    ok = 0
+    skipped = []
+    for index, raw in chunked.iter_chunks(data):
+        if args.chunk is not None and index != args.chunk:
+            continue
+        try:
+            parts, _ = pc98lz.streams(raw)
+        except Exception as e:
+            skipped.append((index, f"decompress: {e}"))
+            continue
+        if not parts:
+            skipped.append((index, "empty chunk"))
+            continue
+
+        # Stream count tells the two apart: a screen is one bitmap split
+        # across four plane streams, a tile sheet is a single blob. Size
+        # alone would not -- a 32,000-byte plane divides evenly into
+        # 160-byte tiles, so a screen's first plane looks like 200 tiles.
+        stem = os.path.join(args.dest, f"c{index:02d}")
+        try:
+            if len(parts) == 1:
+                dec = parts[0]
+                if len(dec) % tilesheet.TILE_BYTES:
+                    skipped.append((index, f"{len(dec)} bytes: not whole tiles"))
+                    continue
+                img = tilesheet.decode(dec, pal)
+                os.makedirs(args.dest, exist_ok=True)
+                img.save(stem + ".png")
+                print(f"  chunk {index:3d} tile sheet {img.size[0]}x{img.size[1]}")
+            else:
+                joined = b"".join(parts)
+                dims = planar.guess_dims(len(joined) // 4) if len(joined) % 4 == 0 else None
+                if not dims:
+                    skipped.append((index, f"{len(parts)} streams, {len(joined)} bytes: "
+                                           "not a plane set"))
+                    continue
+                bmp = planar.to_bitmap(joined, pal, size=dims)
+                to_png(bmp, stem + ".png")
+                print(f"  chunk {index:3d} screen {bmp.width}x{bmp.height}")
+            ok += 1
+        except Exception as e:
+            skipped.append((index, f"{type(e).__name__}: {e}"))
+
+    print(f"OK={ok} SKIPPED={len(skipped)}")
+    for index, why in skipped:
+        print(f"  skipped chunk {index}: {why}")
+    return 0
+
+
 def cmd_palettes(args):
     data = open(args.src, "rb").read()
     total = 0
@@ -246,6 +308,14 @@ def main(argv=None):
     p.add_argument("dest", nargs="?", default=".")
     p.add_argument("--list", action="store_true", help="list members instead")
     p.set_defaults(func=cmd_fld)
+
+    p = sub.add_parser("chunks", help="convert a chunked DAT's graphics")
+    p.add_argument("src", help="a DISK_C.DAT-style chunked file")
+    p.add_argument("dest", nargs="?", default=".")
+    p.add_argument("--chunk", type=int, help="convert only this chunk")
+    p.add_argument("--palette", help='16 RGB triples, "r,g,b,r,g,b,..." '
+                                     "(default: the engine's most common one)")
+    p.set_defaults(func=cmd_chunks)
 
     p = sub.add_parser("palettes",
                        help="scan a chunked DAT for script-embedded palettes")

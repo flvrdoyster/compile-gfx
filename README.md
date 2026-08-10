@@ -55,7 +55,8 @@ compile-gfx one   MAIN14.GCN out.png
 compile-gfx batch ds14/data  ds14/png     # 트리 전체, 폴더 구조 그대로
 compile-gfx pc98  ds10/data/MAIN_DAT ds10/png
 compile-gfx fld   suiko/GENSE.FLD suiko/png        # 水滸伝 아카이브 통째로
-compile-gfx palettes kaitou/DISK_B.DAT --chunk 1   # 幻世 게임 본편 팔레트 스캔
+compile-gfx chunks   kaitou/DISK_C.DAT kaitou/png  # 幻世 게임 본편 그래픽
+compile-gfx palettes kaitou/DISK_B.DAT --chunk 1   # 그 팔레트 후보 스캔
 ```
 
 `batch`는 파일 내용으로 포맷을 판별하므로 Windows 계열 전 확장자를 한 번에 처리.
@@ -64,9 +65,15 @@ compile-gfx palettes kaitou/DISK_B.DAT --chunk 1   # 幻世 게임 본편 팔레
 
 vol.10은 매직이 없고 팔레트를 `MAIN_DAT/MENU.DAT`에서 따로 가져오므로 `pc98`을 씀.
 
-`palettes`는 幻世 시리즈 게임 본편(`DISK_B.DAT`류)에서 스크립트에 박힌 팔레트를 스캔함.
+`chunks`는 幻世 시리즈 게임 본편의 청크형 `DAT`에서 그래픽을 뽑음. 타일시트와 전체 화면이
+한 파일에 섞여 있는데 **스트림 개수로 구분**함 — 화면은 플레인 4개가 각각 스트림이고
+타일시트는 단일 블록. (크기로는 구분 못 함: 32,000바이트 플레인이 160으로 나누어떨어져
+타일 200개처럼 보임.)
+
+`palettes`는 같은 계열 `DISK_B.DAT`에서 스크립트에 박힌 팔레트를 스캔함.
 **후보만 알려주고 정답은 못 정해줌** — 어느 팔레트가 어느 화면 것인지는 인터프리터
 런타임 흐름에만 있어서, 디코딩한 이미지가 실제로 쓰는 인덱스와 대조해 좁혀야 함.
+찾은 값은 `chunks --palette "r,g,b,..."`로 넘김.
 
 ### 라이브러리
 

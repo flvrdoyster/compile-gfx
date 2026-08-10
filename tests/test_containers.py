@@ -168,6 +168,15 @@ def test_tilesheet_decode_plane0_is_a_transparency_mask():
     assert img.getpixel((1, 0)) == (0, 0, 0, 0)
 
 
+def test_tilesheet_default_palette_is_a_full_16_colour_table():
+    assert len(tilesheet.DEFAULT_PALETTE) == 16
+    assert all(len(c) == 3 and all(0 <= v <= 255 for v in c)
+               for c in tilesheet.DEFAULT_PALETTE)
+    # decode() falls back to it, so a caller with no palette still works
+    img = tilesheet.decode(_one_tile(idx=15), cols=1)
+    assert img.getpixel((0, 0)) == tilesheet.DEFAULT_PALETTE[15] + (255,)
+
+
 def test_tilesheet_decode_rejects_partial_tiles():
     try:
         tilesheet.decode(b"\x00" * (tilesheet.TILE_BYTES - 1), TILE_PAL)

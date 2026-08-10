@@ -17,9 +17,24 @@ every 幻世-engine title checked so far (幻世風狂伝／torimono, 幻世快�
 """
 TILE_BYTES = 160
 TILE_PX = 16
+SHEET_BYTES = 256 * TILE_BYTES     # 40,960: a full 16x16 sheet of tiles
+
+# The palette most of these sheets are drawn with. Not a constant of the
+# format -- it is simply the one that repeats most across the engine's
+# script data, and `palette.find_script_palettes()` recovers it from any
+# title's DISK_B.DAT (15 of 幻世風狂伝's 47 palette records are this one).
+# Kept here as a starting point for eyeballing a sheet; scenes that use a
+# different one need the real record. Verified against a capture of
+# 幻世風狂伝 running on hardware.
+DEFAULT_PALETTE = (
+    (0, 0, 0), (153, 170, 204), (85, 119, 136), (0, 85, 255),
+    (0, 17, 170), (119, 187, 153), (51, 136, 68), (255, 187, 153),
+    (221, 136, 102), (255, 0, 0), (136, 68, 34), (255, 238, 0),
+    (187, 170, 17), (255, 221, 204), (255, 119, 187), (255, 255, 255),
+)
 
 
-def decode(data: bytes, palette, cols: int = 16):
+def decode(data: bytes, palette=DEFAULT_PALETTE, cols: int = 16):
     """`data` must be a whole number of tiles. Returns an RGBA PIL Image.
 
     Needs Pillow -- unlike the other containers, this one's whole output is
