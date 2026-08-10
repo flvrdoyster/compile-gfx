@@ -208,8 +208,93 @@ def _parse_palette_arg(text):
     return [tuple(parts[i:i + 3]) for i in range(0, 48, 3)]
 
 
+def _render_chunk(raw, pal):
+    """(PIL image, description) for one chunk, or (None, reason) if it isn't art.
+
+    Stream count tells the two shapes apart: a screen is one bitmap split
+    across four plane streams, a tile sheet is a single blob. Size alone
+    would not -- a 32,000-byte plane divides evenly into 160-byte tiles,
+    so a screen's first plane looks like 200 tiles.
+    """
+    from PIL import Image
+
+    parts, _ = pc98lz.streams(raw)
+    if not parts:
+        return None, "empty chunk"
+
+    if len(parts) == 1:
+        dec = parts[0]
+        if len(dec) % tilesheet.TILE_BYTES:
+            return None, f"{len(dec)} bytes: not whole tiles"
+        img = tilesheet.decode(dec, pal)
+        return img, f"tile sheet {img.size[0]}x{img.size[1]}"
+
+    joined = b"".join(parts)
+    dims = planar.guess_dims(len(joined) // 4) if len(joined) % 4 == 0 else None
+    if not dims:
+        return None, f"{len(parts)} streams, {len(joined)} bytes: not a plane set"
+    bmp = planar.to_bitmap(joined, pal, size=dims)
+    rows = [bmp.pixels[y * bmp.row_bytes:y * bmp.row_bytes + bmp.width]
+            for y in range(bmp.height)]
+    img = Image.frombytes("P", (bmp.width, bmp.height), b"".join(rows))
+    flat = bytearray()
+    for r, g, b in bmp.rgb_triples():
+        flat += bytes((r, g, b))
+    img.putpalette(bytes(flat) + bytes(768 - len(flat)))
+    return img.convert("RGBA"), f"screen {bmp.width}x{bmp.height}"
+
+
+def _candidate_palettes(path):
+    """Distinct complete palettes in a chunked DAT, first-appearance order.
+
+    That order is not arbitrary trivia: it is what a human's notes end up
+    referring to ("chunk 45 uses palette 3"), so it has to stay stable.
+    """
+    data = open(path, "rb").read()
+    seen, order = set(), []
+    for _, raw in chunked.iter_chunks(data):
+        try:
+            dec = pc98lz.decompress_stream(raw)[0]
+        except Exception:
+            continue
+        for _, entries in palette_mod.find_script_palettes(dec, min_entries=16):
+            if len(entries) != 16:
+                continue
+            key = tuple(entries[k] for k in range(16))
+            if key not in seen:
+                seen.add(key)
+                order.append(key)
+    return order
+
+
+def _contact_sheet(images, labels, cell=200, cols=8):
+    """One sheet of every candidate, labelled, for picking by eye."""
+    from PIL import Image, ImageDraw
+
+    gap = 16
+    rows = (len(images) + cols - 1) // cols
+    sheet = Image.new("RGB", (cols * cell, rows * (cell + gap)), (30, 30, 34))
+    draw = ImageDraw.Draw(sheet)
+    for i, (img, label) in enumerate(zip(images, labels)):
+        flat = Image.new("RGBA", img.size, (255, 255, 255, 255))
+        thumb = Image.alpha_composite(flat, img).convert("RGB")
+        thumb.thumbnail((cell, cell), Image.NEAREST)
+        r, c = divmod(i, cols)
+        sheet.paste(thumb, (c * cell + (cell - thumb.width) // 2, r * (cell + gap)))
+        draw.text((c * cell + 3, r * (cell + gap) + cell + 2), label, fill=(210, 210, 215))
+    return sheet
+
+
 def cmd_chunks(args):
     data = open(args.src, "rb").read()
+    if args.try_palettes:
+        candidates = _candidate_palettes(args.try_palettes)
+        if not candidates:
+            print(f"no complete palettes in {args.try_palettes}", file=sys.stderr)
+            return 2
+        print(f"{len(candidates)} candidate palettes from {args.try_palettes}")
+    else:
+        candidates = None
     pal = _parse_palette_arg(args.palette) if args.palette else tilesheet.DEFAULT_PALETTE
 
     ok = 0
@@ -217,40 +302,36 @@ def cmd_chunks(args):
     for index, raw in chunked.iter_chunks(data):
         if args.chunk is not None and index != args.chunk:
             continue
-        try:
-            parts, _ = pc98lz.streams(raw)
-        except Exception as e:
-            skipped.append((index, f"decompress: {e}"))
-            continue
-        if not parts:
-            skipped.append((index, "empty chunk"))
-            continue
-
-        # Stream count tells the two apart: a screen is one bitmap split
-        # across four plane streams, a tile sheet is a single blob. Size
-        # alone would not -- a 32,000-byte plane divides evenly into
-        # 160-byte tiles, so a screen's first plane looks like 200 tiles.
         stem = os.path.join(args.dest, f"c{index:02d}")
         try:
-            if len(parts) == 1:
-                dec = parts[0]
-                if len(dec) % tilesheet.TILE_BYTES:
-                    skipped.append((index, f"{len(dec)} bytes: not whole tiles"))
+            if candidates:
+                # Which palette belongs to which picture is not recoverable
+                # from the file -- the records carry no tag and the choice
+                # lives in the interpreter's control flow. So render them
+                # all and let a human pick, then pass it back via --palette.
+                shots, labels = [], []
+                for n, cand in enumerate(candidates):
+                    img, _ = _render_chunk(raw, list(cand))
+                    if img is None:
+                        continue
+                    shots.append(img)
+                    labels.append(f"[{n}]")
+                if not shots:
+                    _, why = _render_chunk(raw, pal)
+                    skipped.append((index, why))
                     continue
-                img = tilesheet.decode(dec, pal)
+                os.makedirs(args.dest, exist_ok=True)
+                _contact_sheet(shots, labels).save(stem + "_palettes.png")
+                print(f"  chunk {index:3d} {len(shots)} candidates "
+                      f"-> c{index:02d}_palettes.png")
+            else:
+                img, note = _render_chunk(raw, pal)
+                if img is None:
+                    skipped.append((index, note))
+                    continue
                 os.makedirs(args.dest, exist_ok=True)
                 img.save(stem + ".png")
-                print(f"  chunk {index:3d} tile sheet {img.size[0]}x{img.size[1]}")
-            else:
-                joined = b"".join(parts)
-                dims = planar.guess_dims(len(joined) // 4) if len(joined) % 4 == 0 else None
-                if not dims:
-                    skipped.append((index, f"{len(parts)} streams, {len(joined)} bytes: "
-                                           "not a plane set"))
-                    continue
-                bmp = planar.to_bitmap(joined, pal, size=dims)
-                to_png(bmp, stem + ".png")
-                print(f"  chunk {index:3d} screen {bmp.width}x{bmp.height}")
+                print(f"  chunk {index:3d} {note}")
             ok += 1
         except Exception as e:
             skipped.append((index, f"{type(e).__name__}: {e}"))
@@ -315,6 +396,9 @@ def main(argv=None):
     p.add_argument("--chunk", type=int, help="convert only this chunk")
     p.add_argument("--palette", help='16 RGB triples, "r,g,b,r,g,b,..." '
                                      "(default: the engine's most common one)")
+    p.add_argument("--try-palettes", metavar="DISK_B.DAT",
+                   help="render each chunk under every palette in that file, as "
+                        "one contact sheet to pick from by eye")
     p.set_defaults(func=cmd_chunks)
 
     p = sub.add_parser("palettes",

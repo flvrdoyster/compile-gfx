@@ -95,6 +95,21 @@ def test_find_script_palettes_locates_runs_amid_junk():
     assert found == [(5, {0: (68, 0, 0), 1: (153, 170, 51), 3: (255, 255, 255)})]
 
 
+def test_find_script_palettes_reports_a_run_once():
+    # a run whose registers repeat has more records than distinct entries;
+    # resuming by the distinct count lands back inside it and re-reports
+    # the tail as a second palette
+    run = bytes([0, 1, 1, 1, 1, 2, 2, 2, 0, 3, 3, 3, 1, 4, 4, 4, 0xFF])
+    found = palette.find_script_palettes(run, min_entries=2)
+    assert [off for off, _ in found] == [0]
+    assert found[0][1] == {0: (51, 51, 51), 1: (68, 68, 68)}, "last write wins"
+
+
+def test_find_script_palettes_needs_the_terminator_to_close_the_span():
+    # nibbles running straight into non-nibble data are not a run
+    assert palette.find_script_palettes(bytes([0, 1, 1, 1]) + b"\x99", min_entries=1) == []
+
+
 def test_find_script_palettes_respects_min_entries():
     run = bytes([0, 4, 0, 0, 1, 9, 10, 3, 0xFF])  # 2 entries
     assert palette.find_script_palettes(run, min_entries=2) == [

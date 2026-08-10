@@ -138,18 +138,28 @@ def find_script_palettes(data: bytes, min_entries: int = 2):
     registers a decoded image's pixels actually use) against the real
     picture.
     """
+    # Every byte of a run is a nibble and the terminator is 0xFF, so a run
+    # can only be a whole number of records ending at a 0xFF that closes a
+    # maximal nibble-only span. Walking those spans instead of every offset
+    # keeps this linear -- byte-by-byte probing re-walks the same nibble
+    # region once per start and turns a 1 MB script into minutes.
     runs = []
-    i, n = 0, len(data)
-    while i + 4 <= n:
-        if not (data[i] <= 15 and all(b <= 0x0F for b in data[i + 1:i + 4])):
-            i += 1
+    n = len(data)
+    start = 0
+    while start < n:
+        if data[start] > 0x0F:
+            start += 1
             continue
-        entries = read_script_stream(data, i)
-        if len(entries) >= min_entries:
-            runs.append((i, entries))
-            i += 4 * len(entries) + 1
-        else:
-            i += 1
+        end = start
+        while end < n and data[end] <= 0x0F:
+            end += 1
+        if end < n and data[end] == 0xFF:
+            # records are 4 bytes, so the run begins wherever that divides
+            first = start + (end - start) % 4
+            entries = read_script_stream(data, first)
+            if len(entries) >= min_entries:
+                runs.append((first, entries))
+        start = end + 1
     return runs
 
 
