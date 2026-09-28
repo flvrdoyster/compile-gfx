@@ -237,34 +237,61 @@ def test_header8_requires_its_two_leading_zeros():
         pass
 
 
-# ── FLD archives (幻世水滸伝's GENSE.FLD) ────────────────────────────────────
+# ── FLD archives ───────────────────────────────────────────────────────────
 
-def _fld(*members):
-    table = b""
-    body = b""
-    offset = fld.HEADER_BYTES + len(members) * fld.ENTRY_BYTES
+MEMBERS = (("a.cns", b"AAA"), ("b.cns", b"BBBB"))
+
+
+def _fld(magic, members=MEMBERS, directory=b"GAME\\DATA\x00"):
+    layout = fld.LAYOUTS[magic]
+    if magic == b"FLDF0100":
+        head = magic + struct.pack("<I", len(members))
+    else:
+        start = 0x14 + len(directory)
+        head = magic + struct.pack("<III", start, len(members), 0) + directory
+    body_at = len(head) + len(members) * layout.entry_bytes
+
+    table, body = b"", b""
     for name, payload in members:
-        table += name.encode("ascii").ljust(fld.NAME_BYTES, b"\x00")
-        table += struct.pack("<II", offset + len(body), len(payload))
+        entry = bytearray(layout.entry_bytes)
+        entry[layout.name_at:layout.name_at + fld.NAME_BYTES] = \
+            name.encode("ascii").ljust(fld.NAME_BYTES, b"\x00")
+        struct.pack_into("<I", entry, layout.offset_at, body_at + len(body))
+        struct.pack_into("<I", entry, layout.size_at, len(payload))
+        table += bytes(entry)
         body += payload
-    return fld.MAGIC + struct.pack("<I", len(members)) + table + body
+    return head + table + body
 
 
-def test_fld_entries_and_read():
-    blob = _fld(("a.cns", b"AAA"), ("b.cns", b"BBBB"))
-    assert [(n, s) for n, _, s in fld.entries(blob)] == [("a.cns", 3), ("b.cns", 4)]
-    assert fld.read(blob, "a.cns") == b"AAA"
-    assert fld.read(blob, "B.CNS") == b"BBBB", "names match case-insensitively"
+def test_fld_reads_every_version():
+    for magic in fld.LAYOUTS:
+        blob = _fld(magic)
+        assert fld.is_fld(blob)
+        assert [(n, s) for n, _, s in fld.entries(blob)] == [("a.cns", 3), ("b.cns", 4)], magic
+        assert list(fld.iter_members(blob)) == list(MEMBERS), magic
 
 
-def test_fld_iter_members_keeps_table_order():
-    blob = _fld(("a.cns", b"AAA"), ("b.cns", b"BBBB"))
-    assert list(fld.iter_members(blob)) == [("a.cns", b"AAA"), ("b.cns", b"BBBB")]
+def test_fld_v3_moves_the_name_behind_offset_and_size():
+    blob = _fld(b"FLDF0300")
+    start = struct.unpack_from("<I", blob, 8)[0]
+    assert blob[start + 12:start + 17] == b"a.cns"
+    assert struct.unpack_from("<I", blob, start + 8)[0] == 3
+
+
+def test_fld_v1_table_starts_at_a_fixed_offset():
+    blob = _fld(b"FLDF0100")
+    assert blob[12:17] == b"a.cns"
+
+
+def test_fld_read_matches_names_case_insensitively():
+    assert fld.read(_fld(b"FLDF0200"), "B.CNS") == b"BBBB"
 
 
 def test_fld_rejects_other_files():
-    try:
-        fld.entries(b"NOTANFLD" + b"\x00" * 16)
-        assert False, "expected ValueError"
-    except ValueError:
-        pass
+    for blob in (b"NOTANFLD" + b"\x00" * 16,
+                 b"FLDF0200" + struct.pack("<II", 0x18, 1000) + b"\x00" * 8):
+        try:
+            fld.entries(blob)
+            assert False, "expected ValueError"
+        except ValueError:
+            pass
