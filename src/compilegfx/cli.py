@@ -35,7 +35,7 @@ EXTS = (".gcn", ".cns", ".cnx", ".gcs", ".gmp", ".cnu", ".dat")
 # and gets reported as skipped rather than as an error.
 AMBIGUOUS_EXTS = (".dat",)
 
-PROGRAM_EXTS = (".COM", ".EXE", ".SYS", ".BAT")
+NOT_ART_EXTS = (".COM", ".EXE", ".SYS", ".BAT", ".CMD", ".OVL")
 
 GLYPH_W = GLYPH_H = 16
 GLYPH_BYTES = (GLYPH_W // 8) * GLYPH_H * 4      # 128: four planes per cell
@@ -422,7 +422,7 @@ def cmd_files(args):
     skipped = []
     for name in sorted(os.listdir(args.src)):
         full = os.path.join(args.src, name)
-        if not os.path.isfile(full) or name.upper().endswith(PROGRAM_EXTS):
+        if not os.path.isfile(full) or name.upper().endswith(NOT_ART_EXTS):
             continue
         if args.only and name.upper() not in args.only:
             continue
