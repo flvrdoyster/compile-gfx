@@ -18,6 +18,7 @@ Compile 게임의 자체 그래픽 포맷을 PNG로 디코딩하는 파이썬 �
 | `.CNX` | 2비트 태그 | `GMP-200` | vol.20 (패유기·comet·PuyoEd20) |
 | `.CNS` (vol.10) | Compile PC-98 LZ | PC-98 플레이너 | 디스크스테이션 vol.10 |
 | `.CND` | PC-98 RLE | PC-98 플레이너 | 미검증 (해당 파일 없음) |
+| `.DAT` (`gcs v1.4`) | 세로 RLE | PC-98 플레이너 | 환세풍광전 타이틀·오프닝·엔딩 |
 
 확장자로 판단하지 않고 내용으로 판별함. 같은 `.CNS`가 vol.12·14·20에서는 Windows LZ 이미지,
 vol.10에서는 DOS 플레이너 이미지로 전혀 다름.
@@ -29,6 +30,7 @@ vol.10에서는 DOS 플레이너 이미지로 전혀 다름.
 + **`src/compilegfx/container/`** — 페이로드 해석. `header8`(구형 8바이트 헤더) ·
 `gmp200` · `planar`(PC-98 비트플레인) · `palette`(외부/스크립트 팔레트 테이블) ·
 `chunked`(환세 시리즈 청크 테이블) · `tilesheet`(256타일 5플레인 스프라이트시트) ·
+`gcs14`(풍광전 화면) ·
 `fld`(취호전 아카이브) · `tilemap`(이미지가 아닌 격자 데이터 판별).
 + **`src/compilegfx/`** — `detect.py`(내용 기반 판별) · `image.py`(`Bitmap` 타입·PNG 출력) ·
 `cli.py`.
@@ -57,6 +59,7 @@ compile-gfx pc98  ds10/data/MAIN_DAT ds10/png
 compile-gfx fld   suiko/GENSE.FLD suiko/png        # 취호전 아카이브 통째로
 compile-gfx chunks   kaitou/DISK_C.DAT kaitou/png  # 환세 시리즈 게임 본편
 compile-gfx palettes kaitou/DISK_B.DAT --chunk 1   # 그 팔레트 후보 스캔
+compile-gfx files    hukyou hukyou/png             # 풍광전처럼 낱개 파일인 게임 본편
 ```
 
 `batch`는 파일 내용으로 포맷을 판별하므로 Windows 계열 전 확장자를 한 번에 처리.
@@ -82,6 +85,18 @@ compile-gfx chunks DISK_C.DAT out/ --chunk 45 --try-palettes DISK_B.DAT
 후보 전부로 렌더한 컨택트 시트 한 장(`c45_palettes.png`)이 나오고, 라벨의 번호를
 `--palette "r,g,b,..."`로 되먹이면 재현됨. 후보 순서(첫 등장 순)는 고정이라 "45번 청크는
 3번 팔레트" 같은 메모가 그대로 유효함.
+
+`files`는 그래픽을 파일 하나씩 두는 게임(풍광전)의 폴더를 통째로 처리함. 타일시트와
+`gcs v1.4` 화면을 그리고, 맵 격자·스크립트·실행 파일은 건너뜀. 팔레트는 폴더 안 스크립트에서
+가장 많이 반복되는 것을 쓰고, 장면별 팔레트는 `--palette`로 줌(16진 니블 표기 가능):
+
+```bash
+compile-gfx files hukyou out/ --only TITLE.DAT \
+  --palette "000 f98 333 f03 766 730 fed fb9 b75 f00 900 c99 ebb fcc fdd fff"
+```
+
+타일시트의 투명 마스크 극성은 시트마다 데이터로 판별함(`--mask`로 고정 가능). 풍광전 장면별
+팔레트와 판별 근거는 [`FORMATS.md`](FORMATS.md) 참고.
 
 ### 라이브러리
 

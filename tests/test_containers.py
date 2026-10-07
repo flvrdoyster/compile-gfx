@@ -5,7 +5,7 @@ import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
-from compilegfx.container import chunked, fld, header8, palette, tilemap, tilesheet
+from compilegfx.container import chunked, fld, gcs14, header8, palette, tilemap, tilesheet
 
 DECOY = bytes([0x0F] * palette.PALETTE_BYTES)                     # all white
 REAL = bytes(b for i in range(16) for b in (i, i, i))             # a ramp
@@ -200,6 +200,46 @@ def test_tilesheet_decode_rejects_partial_tiles():
         pass
 
 
+def _tile_with(mask_bits, colour_bits, idx=5):
+    planes = [mask_bits] + [colour_bits if idx & (1 << (p - 1)) else 0 for p in range(1, 5)]
+    tile = bytearray(tilesheet.TILE_BYTES)
+    for p, word in enumerate(planes):
+        for row in range(16):
+            struct.pack_into(">H", tile, p * 32 + row * 2, word)
+    return bytes(tile)
+
+
+def test_tilesheet_mask_modes():
+    tile = _tile_with(mask_bits=0x8000, colour_bits=0x4000)
+    opaque = tilesheet.decode(tile, TILE_PAL, cols=1, mask=tilesheet.MASK_SET_OPAQUE)
+    hidden = tilesheet.decode(tile, TILE_PAL, cols=1, mask=tilesheet.MASK_SET_TRANSPARENT)
+    every = tilesheet.decode(tile, TILE_PAL, cols=1, mask=tilesheet.MASK_NONE)
+    assert opaque.getpixel((1, 0)) == (0, 0, 0, 0)
+    assert hidden.getpixel((1, 0)) == (255, 34, 17, 255)
+    assert hidden.getpixel((0, 0)) == (0, 0, 0, 0)
+    assert every.getpixel((0, 0)) == (0, 0, 0, 255)
+
+
+def test_guess_mask_picks_the_polarity_that_hides_no_colour():
+    assert tilesheet.guess_mask(_tile_with(0xFF00, 0x0F00)) == tilesheet.MASK_SET_OPAQUE
+    assert tilesheet.guess_mask(_tile_with(0x00FF, 0x0F00)) == tilesheet.MASK_SET_TRANSPARENT
+    assert tilesheet.guess_mask(_tile_with(0x0FF0, 0xF00F)) == tilesheet.MASK_SET_TRANSPARENT
+    assert tilesheet.guess_mask(_tile_with(0x0FF0, 0x8001)) == tilesheet.MASK_SET_TRANSPARENT
+
+
+def test_guess_mask_falls_back_to_none_when_both_polarities_hide_colour():
+    assert tilesheet.guess_mask(_tile_with(0xFF00, 0x1818)) == tilesheet.MASK_NONE
+    assert tilesheet.guess_mask(_tile_with(0x0000, 0xFFFF)) == tilesheet.MASK_NONE
+
+
+def test_guess_mask_tolerates_a_few_stray_pixels():
+    clean = [_tile_with(0x00FF, 0xFF00)] * 63
+    stray = _tile_with(0x00FF, 0xFF00)[:32] + _tile_with(0x00FF, 0xFF01)[32:34] + clean[0][34:]
+    sheet = b"".join(clean) + stray
+    assert tilesheet.guess_mask(sheet) == tilesheet.MASK_SET_TRANSPARENT
+    assert tilesheet.guess_mask(sheet, tolerance=0) == tilesheet.MASK_NONE
+
+
 # ── tile maps vs images (幻世水滸伝 ships both as .cns) ──────────────────────
 
 def _tilemap(width=3, height=2):
@@ -295,3 +335,61 @@ def test_fld_rejects_other_files():
             assert False, "expected ValueError"
         except ValueError:
             pass
+
+
+# ── gcs v1.4 screens (幻世風狂伝 TITLE / OPENING / ENDING) ──────────────────
+
+def _gcs_count(op, n):
+    out = b""
+    while n:
+        take = min(n, 0x1FF)
+        out += bytes(((op << 4) | (take >> 8), take & 0xFF))
+        n -= take
+    return out
+
+
+def _gcs(*planes):
+    header = gcs14.MAGIC + bytes(8) + bytes(range(16)) * 3
+    return header + b"".join(planes)
+
+
+def test_gcs14_writes_columns_top_to_bottom():
+    literal = bytes((0x23, 0x81, 0x42, 0x24))
+    rest = gcs14.PLANE_BYTES - 3
+    data = _gcs(literal + _gcs_count(0, rest), *[_gcs_count(0, gcs14.PLANE_BYTES)] * 3)
+    planes, end = gcs14.decode_planes(data)
+    assert end == len(data)
+    assert planes[0][0] == 0x81
+    assert planes[0][gcs14.ROW_BYTES] == 0x42
+    assert planes[0][2 * gcs14.ROW_BYTES] == 0x24
+    assert planes[0][1] == 0
+
+
+def test_gcs14_copies_and_inverts_earlier_planes():
+    full = gcs14.PLANE_BYTES
+    plane0 = bytes((0x22, 0x0F, 0xF0)) + _gcs_count(1, full - 2)
+    data = _gcs(plane0, _gcs_count(4, full), _gcs_count(5, full), _gcs_count(0, full))
+    planes, end = gcs14.decode_planes(data)
+    assert end == len(data)
+    assert planes[1] == planes[0]
+    assert planes[2] == bytes(b ^ 0xFF for b in planes[0])
+    assert planes[0][:1] == b"\x0f" and planes[0][gcs14.ROW_BYTES] == 0xF0
+
+
+def test_gcs14_fill_patterns():
+    full = gcs14.PLANE_BYTES
+    plane0 = bytes((0xC3, 0x99)) + bytes((0xE2, 0x11, 0x22)) + _gcs_count(0, full - 7)
+    data = _gcs(plane0, *[_gcs_count(0, full)] * 3)
+    planes, _ = gcs14.decode_planes(data)
+    col = [planes[0][r * gcs14.ROW_BYTES] for r in range(7)]
+    assert col == [0x99, 0x99, 0x99, 0x11, 0x22, 0x11, 0x22]
+
+
+def test_gcs14_parse_uses_the_header_palette_unless_given_one():
+    full = gcs14.PLANE_BYTES
+    data = _gcs(*[_gcs_count(0, full)] * 4)
+    bmp = gcs14.parse(data)
+    assert (bmp.width, bmp.height) == (640, 400)
+    assert bmp.rgb_triples()[1] == palette.rgb444(bytes(range(16)) * 3)[1]
+    assert gcs14.parse(data, TILE_PAL).rgb_triples() == TILE_PAL
+    assert not gcs14.is_gcs14(b"gcs v1.3" + data[8:])

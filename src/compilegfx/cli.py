@@ -6,6 +6,7 @@
     compile-gfx fld      <GENSE.FLD> <out dir>      # 幻世水滸伝 archive
     compile-gfx chunks   <DISK_C.DAT> <out dir>     # 幻世 series, in-game
     compile-gfx palettes <DISK_B.DAT>               # its palettes
+    compile-gfx files    <game dir> <out dir>       # 幻世風狂伝, loose files
 
 `one` and `batch` detect the format from the bytes, so they cover every
 Windows-era file regardless of extension. vol.10's DOS files carry no magic
@@ -22,7 +23,7 @@ import sys
 
 from . import load, to_png
 from .codec import pc98lz
-from .container import chunked, fld
+from .container import chunked, fld, gcs14
 from .container import palette as palette_mod
 from .container import planar, tilesheet
 from .detect import NotAnImage
@@ -33,6 +34,8 @@ EXTS = (".gcn", ".cns", ".cnx", ".gcs", ".gmp", ".cnu", ".dat")
 # sprite sheets and for map tables, so a decode failure there is expected
 # and gets reported as skipped rather than as an error.
 AMBIGUOUS_EXTS = (".dat",)
+
+PROGRAM_EXTS = (".COM", ".EXE", ".SYS", ".BAT")
 
 GLYPH_W = GLYPH_H = 16
 GLYPH_BYTES = (GLYPH_W // 8) * GLYPH_H * 4      # 128: four planes per cell
@@ -201,23 +204,16 @@ def cmd_fld(args):
 
 
 def _parse_palette_arg(text):
-    """"r,g,b,r,g,b,..." (16 colours) -> [(r, g, b)] * 16."""
-    parts = [int(v) for v in text.replace(" ", "").split(",") if v != ""]
+    tokens = text.replace(",", " ").split()
+    if len(tokens) == 16 and all(len(t) == 3 for t in tokens):
+        return [tuple(int(c, 16) * 17 for c in t) for t in tokens]
+    parts = [int(v) for v in tokens]
     if len(parts) != 48:
-        raise ValueError(f"need 48 numbers (16 RGB triples), got {len(parts)}")
+        raise ValueError("need 16 RGB triples as 48 numbers, or 16 hex 'rgb' nibble triples")
     return [tuple(parts[i:i + 3]) for i in range(0, 48, 3)]
 
 
 def _render_chunk(raw, pal):
-    """(PIL image, description) for one chunk, or (None, reason) if it isn't art.
-
-    Stream count tells the two shapes apart: a screen is one bitmap split
-    across four plane streams, a tile sheet is a single blob. Size alone
-    would not -- a 32,000-byte plane divides evenly into 160-byte tiles,
-    so a screen's first plane looks like 200 tiles.
-    """
-    from PIL import Image
-
     parts, _ = pc98lz.streams(raw)
     if not parts:
         return None, "empty chunk"
@@ -226,14 +222,21 @@ def _render_chunk(raw, pal):
         dec = parts[0]
         if len(dec) % tilesheet.TILE_BYTES:
             return None, f"{len(dec)} bytes: not whole tiles"
-        img = tilesheet.decode(dec, pal)
-        return img, f"tile sheet {img.size[0]}x{img.size[1]}"
+        mask = tilesheet.guess_mask(dec)
+        img = tilesheet.decode(dec, pal, mask=mask)
+        return img, f"tile sheet {img.size[0]}x{img.size[1]}, mask {mask}"
 
     joined = b"".join(parts)
     dims = planar.guess_dims(len(joined) // 4) if len(joined) % 4 == 0 else None
     if not dims:
         return None, f"{len(parts)} streams, {len(joined)} bytes: not a plane set"
     bmp = planar.to_bitmap(joined, pal, size=dims)
+    return _bitmap_image(bmp), f"screen {bmp.width}x{bmp.height}"
+
+
+def _bitmap_image(bmp):
+    from PIL import Image
+
     rows = [bmp.pixels[y * bmp.row_bytes:y * bmp.row_bytes + bmp.width]
             for y in range(bmp.height)]
     img = Image.frombytes("P", (bmp.width, bmp.height), b"".join(rows))
@@ -241,7 +244,7 @@ def _render_chunk(raw, pal):
     for r, g, b in bmp.rgb_triples():
         flat += bytes((r, g, b))
     img.putpalette(bytes(flat) + bytes(768 - len(flat)))
-    return img.convert("RGBA"), f"screen {bmp.width}x{bmp.height}"
+    return img.convert("RGBA")
 
 
 def _candidate_palettes(path):
@@ -363,6 +366,84 @@ def cmd_palettes(args):
     return 0
 
 
+def _script_palette(src_dir, min_colours=8):
+    counts = {}
+    for path in sorted(os.listdir(src_dir)):
+        full = os.path.join(src_dir, path)
+        if not os.path.isfile(full):
+            continue
+        raw = open(full, "rb").read()
+        for data in (raw, pc98lz.decompress(raw)):
+            for _, entries in palette_mod.find_script_palettes(data, min_entries=16):
+                key = tuple(entries[k] for k in range(16))
+                if len(set(key)) >= min_colours:
+                    counts[key] = counts.get(key, 0) + 1
+    if not counts:
+        return None
+    return list(max(counts, key=counts.get))
+
+
+def _map_grid(dec):
+    if len(dec) < 4:
+        return False
+    width, height = int.from_bytes(dec[0:2], "little"), int.from_bytes(dec[2:4], "little")
+    return 0 < width <= 256 and 0 < height <= 256 and len(dec) >= 4 + 3 * width * height
+
+
+def _render_file(raw, pal, mask):
+    if gcs14.is_gcs14(raw):
+        img = _bitmap_image(gcs14.parse(raw, pal))
+        return img, "gcs v1.4 screen 640x400"
+    parts, end = pc98lz.streams(raw)
+    if len(parts) != 1 or end != len(raw):
+        return None, "not a single LZ stream"
+    dec = parts[0]
+    if _map_grid(dec):
+        return None, "map grid"
+    whole = len(dec) // tilesheet.TILE_BYTES * tilesheet.TILE_BYTES
+    if not whole or any(dec[whole:]):
+        return None, f"{len(dec)} bytes: not whole tiles"
+    tiles = dec[:whole]
+    chosen = mask or tilesheet.guess_mask(tiles)
+    img = tilesheet.decode(tiles, pal, mask=chosen)
+    return img, f"tile sheet {img.size[0]}x{img.size[1]}, mask {chosen}"
+
+
+def cmd_files(args):
+    if args.palette:
+        pal = _parse_palette_arg(args.palette)
+    else:
+        pal = _script_palette(args.src)
+        if pal is None:
+            print(f"no script palette in {args.src}; using the tile sheet default",
+                  file=sys.stderr)
+            pal = list(tilesheet.DEFAULT_PALETTE)
+    ok = 0
+    skipped = []
+    for name in sorted(os.listdir(args.src)):
+        full = os.path.join(args.src, name)
+        if not os.path.isfile(full) or name.upper().endswith(PROGRAM_EXTS):
+            continue
+        if args.only and name.upper() not in args.only:
+            continue
+        try:
+            img, note = _render_file(open(full, "rb").read(), pal, args.mask)
+        except Exception as e:
+            skipped.append((name, f"{type(e).__name__}: {e}"))
+            continue
+        if img is None:
+            skipped.append((name, note))
+            continue
+        os.makedirs(args.dest, exist_ok=True)
+        img.save(os.path.join(args.dest, os.path.splitext(name)[0] + ".png"))
+        print(f"  {name}: {note}")
+        ok += 1
+    print(f"OK={ok} SKIPPED={len(skipped)}")
+    for name, why in skipped:
+        print(f"  skipped {name}: {why}")
+    return 0
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(prog="compile-gfx", description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -408,6 +489,17 @@ def main(argv=None):
     p.add_argument("--min-entries", type=int, default=2,
                    help="ignore runs setting fewer registers than this (default 2)")
     p.set_defaults(func=cmd_palettes)
+
+    p = sub.add_parser("files", help="convert a directory of loose engine files")
+    p.add_argument("src", help="the game directory (幻世風狂伝's files)")
+    p.add_argument("dest", nargs="?", default=".")
+    p.add_argument("--only", type=lambda v: {n.upper() for n in v.split(",")},
+                   help="comma-separated file names to convert")
+    p.add_argument("--palette", help='16 "rgb" hex nibble triples, or 48 numbers '
+                                     "(default: the scripts' most common one)")
+    p.add_argument("--mask", choices=tilesheet.MASKS,
+                   help="tile sheet plane 0 meaning (default: guessed per sheet)")
+    p.set_defaults(func=cmd_files)
 
     args = ap.parse_args(argv)
     return args.func(args)
