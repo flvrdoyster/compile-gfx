@@ -30,10 +30,11 @@ vol.10에서는 DOS 플레이너 이미지로 전혀 다름.
 + **`src/compilegfx/container/`** — 페이로드 해석. `header8`(구형 8바이트 헤더) ·
 `gmp200` · `planar`(PC-98 비트플레인) · `palette`(외부/스크립트 팔레트 테이블) ·
 `chunked`(환세 시리즈 청크 테이블) · `tilesheet`(256타일 5플레인 스프라이트시트) ·
-`gcs14`(풍광전 화면) ·
+`gcs14`(풍광전 화면) · `cells`(16x16 4플레인 조각, 시트 PNG와 왕복) ·
 `fld`(취호전 아카이브) · `tilemap`(이미지가 아닌 격자 데이터 판별).
-+ **`src/compilegfx/`** — `detect.py`(내용 기반 판별) · `image.py`(`Bitmap` 타입·PNG 출력) ·
-`cli.py`.
++ **`src/compilegfx/script/`** — `sp1`(희담 데모 `SP1.COM`의 연출 스크립트 재생기, 프레임별 조각 출처 기록).
++ **`src/compilegfx/`** — `extract.py`(폴더 전체 판별·추출) · `detect.py`(Windows 계열 판별) ·
+`image.py`(`Bitmap` 타입·PNG 출력) · `cli.py`.
 + **`tests/`** — 코덱 단위 테스트와 실제 디스크 대조 회귀. 게임 데이터는 저장소에 없고
 `vectors/corpus.json`에 디코딩 결과 해시만 둠.
 
@@ -53,50 +54,51 @@ PNG까지 쓰려면 `pip install "compile-gfx[png] @ git+https://github.com/flvr
 ### 명령줄
 
 ```bash
-compile-gfx one   MAIN14.GCN out.png
-compile-gfx batch ds14/data  ds14/png     # 트리 전체, 폴더 구조 그대로
-compile-gfx pc98  ds10/data/MAIN_DAT ds10/png
-compile-gfx fld   suiko/GENSE.FLD suiko/png        # 취호전 아카이브 통째로
-compile-gfx chunks   kaitou/DISK_C.DAT kaitou/png  # 환세 시리즈 게임 본편
-compile-gfx palettes kaitou/DISK_B.DAT --chunk 1   # 그 팔레트 후보 스캔
-compile-gfx files    hukyou hukyou/png             # 풍광전처럼 낱개 파일인 게임 본편
+compile-gfx extract <게임 폴더 또는 파일> <출력 폴더>
 ```
 
-`batch`는 파일 내용으로 포맷을 판별하므로 Windows 계열 전 확장자를 한 번에 처리.
-결과를 셋으로 구분해 보고함 — 변환 성공, **스킵**(그래픽 확장자지만 이미지가 아닌 파일 —
-사례는 [`FORMATS.md`](FORMATS.md)), **실패**(진짜 예상 밖).
+어떤 파일이 어떤 형식인지 몰라도 됨. 폴더 안 파일을 하나하나 내용으로 판별하고, FLD 아카이브나
+청크형 `DAT` 같은 묶음 파일은 안까지 열어서 그림을 모두 뽑음. 출력 폴더는 입력 폴더 구조를
+따르고, 묶음 파일 안의 그림은 그 파일 이름의 폴더 아래에 들어감(`GENSE.FLD/xxx.png`,
+`DISK_C.DAT/c02.png`).
 
-vol.10은 매직이 없고 팔레트를 `MAIN_DAT/MENU.DAT`에서 따로 가져오므로 `pc98`을 씀.
+끝나면 `<출력 폴더>/extract_report.tsv`에 파일마다 결과가 남음:
 
-`chunks`는 환세 시리즈 게임 본편의 청크형 `DAT`에서 그래픽을 뽑음. 타일시트와 전체 화면이
-한 파일에 섞여 있는데 **스트림 개수로 구분**함 — 화면은 플레인 4개가 각각 스트림이고
-타일시트는 단일 블록. (크기로는 구분 못 함: 32,000바이트 플레인이 160으로 나누어떨어져
-타일 200개처럼 보임.)
+| 열 | 내용 |
+|---|---|
+| 상태 | `변환` / `건너뜀`(그림이 아님 — 텍스트·스크립트·맵·동영상 등) / `판별 불가`(아는 형식에 안 맞음) |
+| 형식 | 판별한 형식과 크기 |
+| 팔레트 | `파일 내장`·`팔레트 표`(확정), `스크립트 최빈값(추정)`·`기본값(추정)` |
+| 비고 | 판별 근거나 단서 |
 
-`palettes`는 같은 계열 `DISK_B.DAT`에서 스크립트에 박힌 팔레트를 스캔함.
-**후보만 알려주고 정답은 못 정해줌** — 팔레트 레코드에는 대상 이미지를 가리키는 표식이
-없고(65바이트 레코드가 줄줄이 배열로만 들어 있음), 어느 것을 쓰는지는 인터프리터 런타임
-흐름에만 있음. 그래서 후보를 전부 그려놓고 사람이 고르는 게 유일하게 확실한 방법임:
+팔레트가 **추정**인 그림은 색이 틀릴 수 있음. PC-98 계열은 팔레트가 그림 파일 밖(스크립트 등)에
+있어서, 장면마다 다른 팔레트를 쓰는 그림은 아직 자동으로 못 맞춤. 그런 그림은 아래 세부 도구로
+팔레트를 직접 지정함. `판별 불가` 목록은 아직 모르는 형식의 단서임.
+
+#### 세부 도구
 
 ```bash
-compile-gfx chunks DISK_C.DAT out/ --chunk 45 --try-palettes DISK_B.DAT
+compile-gfx chunks   kaitou/DISK_C.DAT kaitou/png  # 청크형 DAT 하나
+compile-gfx palettes kaitou/DISK_B.DAT --chunk 1   # 스크립트 팔레트 후보 나열
+compile-gfx files    hukyou hukyou/png             # 낱개 파일 폴더 (--palette, --mask)
+compile-gfx one      MAIN14.GCN out.png            # Windows 계열 파일 하나
 ```
 
-후보 전부로 렌더한 컨택트 시트 한 장(`c45_palettes.png`)이 나오고, 라벨의 번호를
-`--palette "r,g,b,..."`로 되먹이면 재현됨. 후보 순서(첫 등장 순)는 고정이라 "45번 청크는
-3번 팔레트" 같은 메모가 그대로 유효함.
-
-`files`는 그래픽을 파일 하나씩 두는 게임(풍광전)의 폴더를 통째로 처리함. 타일시트와
-`gcs v1.4` 화면을 그리고, 맵 격자·스크립트·실행 파일은 건너뜀. 팔레트는 폴더 안 스크립트에서
-가장 많이 반복되는 것을 쓰고, 장면별 팔레트는 `--palette`로 줌(16진 니블 표기 가능):
+`chunks`·`files`의 `--palette`는 16진 니블 표기를 받음:
 
 ```bash
 compile-gfx files hukyou out/ --only TITLE.DAT \
   --palette "000 f98 333 f03 766 730 fed fb9 b75 f00 900 c99 ebb fcc fdd fff"
 ```
 
-타일시트의 투명 마스크 극성은 시트마다 데이터로 판별함(`--mask`로 고정 가능). 풍광전 장면별
-팔레트와 판별 근거는 [`FORMATS.md`](FORMATS.md) 참고.
+어느 팔레트인지 모를 때는 후보 전부로 그린 컨택트 시트를 보고 고름:
+
+```bash
+compile-gfx chunks DISK_C.DAT out/ --chunk 45 --try-palettes DISK_B.DAT
+```
+
+후보 순서(첫 등장 순)는 고정이라 "45번 청크는 3번 팔레트" 같은 메모가 그대로 유효함.
+게임별로 확인된 장면 팔레트는 [`FORMATS.md`](FORMATS.md) 참고.
 
 ### 라이브러리
 
