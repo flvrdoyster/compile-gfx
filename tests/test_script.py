@@ -6,7 +6,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
 from compilegfx.codec import pc98lz
 from compilegfx.container import cells
-from compilegfx.script import sp1
+from compilegfx.script import gensei, sp1
 
 
 def _cell(fill):
@@ -93,3 +93,108 @@ def test_rows_skip_the_extra_stride_before_drawing():
     _, frames = _play(_script(LOAD, PAL, draw, FLIP), DATA, files)
     assert frames[-1].indices[0] == 9
     assert frames[-1].indices[16 * sp1.WINDOW_W] == 9
+
+
+from compilegfx import extract
+from compilegfx.container import tilesheet
+
+
+def _chunked(chunks):
+    table = bytearray(0x400)
+    at = 0x400
+    for i, chunk in enumerate(list(chunks) + [b""]):
+        struct.pack_into("<HH", table, i * 4, at >> 16, at & 0xFFFF)
+        at += len(chunk)
+    return bytes(table) + b"".join(chunks)
+
+
+def _stream(colour15):
+    regs = [(k, k % 16, (k * 2) % 16, (k * 3) % 16) for k in range(15)] + [(15,) + colour15]
+    return b"".join(bytes(r) for r in regs) + b"\xff"
+
+
+def _gensei_script(*parts):
+    body = bytearray(0x200)
+    for at, blob in parts:
+        body[at:at + len(blob)] = blob
+    return bytes(body)
+
+
+APPLY = bytes([0x21, 0x01])
+PAL_A, PAL_B = _stream((15, 0, 7)), _stream((0, 15, 3))
+
+
+def _games(script, images=2):
+    scripts = _chunked([pc98lz.compress(b"\x00" * 64), pc98lz.compress(script), pc98lz.compress(b"\x00" * 64)])
+    sheet = pc98lz.compress(bytes([0x3C]) * (tilesheet.TILE_BYTES * 16))
+    graphics = _chunked([pc98lz.compress(b"\x00" * 64)] + [sheet] * images)
+    return scripts, graphics
+
+
+def _colour(register15):
+    return tuple(v * 17 for v in register15)
+
+
+def test_palette_applied_right_before_a_load_batch_is_the_only_candidate():
+    script = _gensei_script((0, bytes([0x20]) + struct.pack("<H", 0x100) + APPLY),
+                     (5, bytes([0x32, 2, 1, 0, 0x32, 2, 2, 1])),
+                     (0x100, PAL_A))
+    scripts, graphics = _games(script)
+    found = gensei.candidates(scripts, graphics)
+    assert [p[15] for p in gensei.distinct(found, 2, 1)] == [(255, 0, 119)]
+    assert gensei.distinct(found, 2, 2) == gensei.distinct(found, 2, 1)
+
+
+def test_a_palette_just_before_the_next_batch_belongs_to_that_batch():
+    script = _gensei_script((0, bytes([0x20]) + struct.pack("<H", 0x100) + APPLY),
+                     (5, bytes([0x32, 2, 1, 0, 0x32, 2, 1, 1])),
+                     (20, bytes([0x20]) + struct.pack("<H", 0x150) + APPLY),
+                     (25, bytes([0x32, 2, 2, 2, 0x32, 2, 2, 3])),
+                     (0x100, PAL_A), (0x150, PAL_B))
+    scripts, graphics = _games(script)
+    found = gensei.candidates(scripts, graphics)
+    assert len(gensei.distinct(found, 2, 1)) == 1
+    assert [p[15] for p in gensei.distinct(found, 2, 2)] == [(0, 255, 51)]
+
+
+def test_an_isolated_load_pattern_is_treated_as_text():
+    script = _gensei_script((0, bytes([0x20]) + struct.pack("<H", 0x100) + APPLY),
+                     (5, bytes([0x32, 2, 1, 0])), (0x100, PAL_A))
+    scripts, graphics = _games(script)
+    assert gensei.candidates(scripts, graphics) == {}
+
+
+def _folder(tmp_path, script):
+    scripts, graphics = _games(script)
+    (tmp_path / "DISK_B.DAT").write_bytes(scripts)
+    (tmp_path / "DISK_C.DAT").write_bytes(graphics)
+    return {r.source: r for r in extract.scan(str(tmp_path))}
+
+
+def test_extract_picks_the_only_script_palette(tmp_path):
+    script = _gensei_script((0, bytes([0x20]) + struct.pack("<H", 0x100) + APPLY),
+                     (5, bytes([0x32, 2, 1, 0, 0x32, 2, 2, 1])), (0x100, PAL_A))
+    got = _folder(tmp_path, script)["DISK_C.DAT/c01"]
+    assert got.palette == extract.PAL_EVIDENCE
+    assert got.image.getpixel((2, 0)) == (255, 0, 119, 255)
+
+
+def test_extract_offers_a_sheet_when_the_script_names_several_palettes(tmp_path):
+    script = _gensei_script((0, bytes([0x20]) + struct.pack("<H", 0x100) + APPLY),
+                     (5, bytes([0x32, 2, 1, 0, 0x32, 2, 2, 1])),
+                     (60, bytes([0x20]) + struct.pack("<H", 0x150) + APPLY),
+                     (0x100, PAL_A), (0x150, PAL_B))
+    results = _folder(tmp_path, script)
+    assert results["DISK_C.DAT/c01"].palette in extract.GUESSED
+    sheet = results["DISK_C.DAT/c01_palettes"]
+    assert sheet.status == extract.OK and "#1" in sheet.note and "#2" in sheet.note
+
+
+def test_other_file_names_get_no_script_evidence(tmp_path):
+    script = _gensei_script((0, bytes([0x20]) + struct.pack("<H", 0x100) + APPLY),
+                     (5, bytes([0x32, 2, 1, 0, 0x32, 2, 2, 1])), (0x100, PAL_A))
+    scripts, graphics = _games(script)
+    (tmp_path / "DISK_B.DAT").write_bytes(scripts)
+    (tmp_path / "OTHER.DAT").write_bytes(graphics)
+    results = {r.source: r for r in extract.scan(str(tmp_path))}
+    assert results["OTHER.DAT/c01"].palette != extract.PAL_EVIDENCE

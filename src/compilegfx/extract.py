@@ -6,14 +6,16 @@ from .codec import cnx, gcn, pc98lz
 from .container import cells, chunked, fld, gcs14, gmp200, planar, tilesheet
 from .container import palette as palette_mod
 from .detect import NotAnImage, load, looks_like_sjis_text
-from .image import Bitmap
-from .script import sp1
+from .image import Bitmap, contact_sheet, to_pil
+from .script import gensei, sp1
 
 PAL_EMBEDDED = "파일 내장"
 PAL_TABLE = "팔레트 표"
 PAL_SCRIPT = "스크립트 최빈값(추정)"
 PAL_DEFAULT = "기본값(추정)"
 PAL_PLAYED = "스크립트 재생"
+PAL_EVIDENCE = "스크립트 근거"
+SCRIPT_FILE, GRAPHICS_FILE = "DISK_B.DAT", "DISK_C.DAT"
 GUESSED = (PAL_SCRIPT, PAL_DEFAULT)
 
 OK, SKIPPED, UNKNOWN = "변환", "건너뜀", "판별 불가"
@@ -108,6 +110,25 @@ class Folder:
             self._script = list(counts.most_common(1)[0][0]) if counts else None
         return self._script
 
+    def evidence(self):
+        if not hasattr(self, "_evidence"):
+            self._evidence = {}
+            lookup = {n.upper(): n for n in self.names}
+            if SCRIPT_FILE in lookup and GRAPHICS_FILE in lookup:
+                scripts = self.read(lookup[SCRIPT_FILE])
+                graphics = self.read(lookup[GRAPHICS_FILE])
+                if _is_chunked(scripts) and _is_chunked(graphics):
+                    self._evidence = gensei.candidates(scripts, graphics)
+        return self._evidence
+
+    def evidence_palettes(self, name, index):
+        if os.path.basename(name).upper() != GRAPHICS_FILE:
+            return []
+        return gensei.distinct(self.evidence(), gensei.DISK_GRAPHICS, index)
+
+    def evidence_notes(self, index):
+        return gensei.describe(self.evidence(), gensei.DISK_GRAPHICS, index)
+
     def pc98_palette(self, name):
         pal = self.table().get(name.upper())
         if pal:
@@ -195,11 +216,12 @@ def _gcs14(name, raw, folder):
     return Result(name, OK, "gcs v1.4 화면 640x400", gcs14.parse(raw, pal), source)
 
 
-def _pc98_lz(name, raw, folder, mask=None):
+def _pc98_lz(name, raw, folder, mask=None, pal=None, source=None):
     parts, end = pc98lz.streams(raw)
     if not parts or end != len(raw):
         return None
-    pal, source = folder.pc98_palette(os.path.basename(name))
+    if pal is None:
+        pal, source = folder.pc98_palette(os.path.basename(name))
     if len(parts) == 4 and len({len(p) for p in parts}) == 1:
         dims = planar.guess_dims(len(parts[0]))
         if dims:
@@ -271,24 +293,61 @@ def _chunks(name, raw, folder):
         if group == list(range(index, index + 4)):
             dims = _plane_group([streams[g] for g in group])
         if dims:
-            pal, source = folder.pc98_palette("")
             sub = f"{name}/c{index:02d}-c{group[-1]:02d}"
-            bmp = planar.to_bitmap(b"".join(streams[g] for g in group), pal, size=dims)
-            results.append(Result(sub, OK, f"PC-98 화면 {dims[0]}x{dims[1]} (플레인 4청크)", bmp, source))
+            data = b"".join(streams[g] for g in group)
+
+            def build(pal, source, sub=sub, data=data, dims=dims):
+                if pal is None:
+                    pal, source = folder.pc98_palette("")
+                return Result(sub, OK, f"PC-98 화면 {dims[0]}x{dims[1]} (플레인 4청크)",
+                              planar.to_bitmap(data, pal, size=dims), source)
+            results += _with_evidence(sub, folder, name, index, build)
             i += 4
             continue
         sub = f"{name}/c{index:02d}"
-        got = _pc98_lz(sub, chunk, folder) or _pc98_lz_prefix(sub, chunk, folder)
-        results.append(got or Result(sub, UNKNOWN, note=f"{len(chunk)}B"))
+
+        def build(pal, source, sub=sub, chunk=chunk):
+            return (_pc98_lz(sub, chunk, folder, pal=pal, source=source)
+                    or _pc98_lz_prefix(sub, chunk, folder, pal=pal, source=source))
+        got = _with_evidence(sub, folder, name, index, build)
+        results += got or [Result(sub, UNKNOWN, note=f"{len(chunk)}B")]
         i += 1
     return results
 
 
-def _pc98_lz_prefix(name, chunk, folder):
+def _pc98_lz_prefix(name, chunk, folder, pal=None, source=None):
     parts, end = pc98lz.streams(chunk)
     if parts and end <= len(chunk):
-        return _pc98_lz(name, chunk[:end], folder)
+        return _pc98_lz(name, chunk[:end], folder, pal=pal, source=source)
     return None
+
+
+def _picture(image):
+    return to_pil(image) if isinstance(image, Bitmap) else image
+
+
+def _with_evidence(sub, folder, name, index, build):
+    found = folder.evidence_palettes(name, index)
+    if len(found) == 1:
+        result = build(list(found[0]), PAL_EVIDENCE)
+        return [result] if result else []
+    result = build(None, None)
+    if not result:
+        return []
+    out = [result]
+    if len(found) >= 2 and result.status == OK:
+        shots, labels = [], []
+        for n, candidate in enumerate(found, 1):
+            shot = build(list(candidate), PAL_EVIDENCE)
+            if shot and shot.status == OK:
+                shots.append(_picture(shot.image))
+                labels.append(f"#{n}")
+        if shots:
+            out.append(Result(sub + "_palettes", OK, f"스크립트 후보 {len(shots)}개 컨택트 시트",
+                              contact_sheet(shots, labels), PAL_EVIDENCE + "(후보)",
+                              note="후보 중 하나가 맞음, 스크립트만으로는 못 정함: " + "; ".join(folder.evidence_notes(index))))
+            result.note = (result.note + " / " if result.note else "") + f"스크립트 후보 {len(shots)}개"
+    return out
 
 
 def _plane_split_groups(folder):

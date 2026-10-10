@@ -73,3 +73,33 @@ def to_png(bmp: Bitmap, out_path: str) -> None:
         img = img.transpose(Image.FLIP_TOP_BOTTOM)
     os.makedirs(os.path.dirname(out_path) or ".", exist_ok=True)
     img.convert("RGB").save(out_path)
+
+
+def to_pil(bmp: Bitmap):
+    from PIL import Image
+
+    rows = [bmp.pixels[y * bmp.row_bytes:y * bmp.row_bytes + bmp.width]
+            for y in range(bmp.height)]
+    img = Image.frombytes("P", (bmp.width, bmp.height), b"".join(rows))
+    flat = bytearray()
+    for r, g, b in bmp.rgb_triples():
+        flat += bytes((r, g, b))
+    img.putpalette(bytes(flat) + bytes(768 - len(flat)))
+    return img.convert("RGBA")
+
+
+def contact_sheet(images, labels, cell=200, cols=8):
+    from PIL import Image, ImageDraw
+
+    gap = 16
+    rows = (len(images) + cols - 1) // cols
+    sheet = Image.new("RGB", (cols * cell, rows * (cell + gap)), (30, 30, 34))
+    draw = ImageDraw.Draw(sheet)
+    for i, (img, label) in enumerate(zip(images, labels)):
+        flat = Image.new("RGBA", img.size, (255, 255, 255, 255))
+        thumb = Image.alpha_composite(flat, img.convert("RGBA")).convert("RGB")
+        thumb.thumbnail((cell, cell), Image.NEAREST)
+        r, c = divmod(i, cols)
+        sheet.paste(thumb, (c * cell + (cell - thumb.width) // 2, r * (cell + gap)))
+        draw.text((c * cell + 3, r * (cell + gap) + cell + 2), label, fill=(210, 210, 215))
+    return sheet

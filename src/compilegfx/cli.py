@@ -18,6 +18,7 @@ import os
 import sys
 
 from . import load, to_png
+from .image import contact_sheet, to_pil
 from .codec import pc98lz
 from .container import chunked, fld, gcs14
 from .container import palette as palette_mod
@@ -141,20 +142,7 @@ def _render_chunk(raw, pal):
     if not dims:
         return None, f"{len(parts)} streams, {len(joined)} bytes: not a plane set"
     bmp = planar.to_bitmap(joined, pal, size=dims)
-    return _bitmap_image(bmp), f"screen {bmp.width}x{bmp.height}"
-
-
-def _bitmap_image(bmp):
-    from PIL import Image
-
-    rows = [bmp.pixels[y * bmp.row_bytes:y * bmp.row_bytes + bmp.width]
-            for y in range(bmp.height)]
-    img = Image.frombytes("P", (bmp.width, bmp.height), b"".join(rows))
-    flat = bytearray()
-    for r, g, b in bmp.rgb_triples():
-        flat += bytes((r, g, b))
-    img.putpalette(bytes(flat) + bytes(768 - len(flat)))
-    return img.convert("RGBA")
+    return to_pil(bmp), f"screen {bmp.width}x{bmp.height}"
 
 
 def _candidate_palettes(path):
@@ -180,32 +168,17 @@ def _candidate_palettes(path):
     return order
 
 
-def _contact_sheet(images, labels, cell=200, cols=8):
-    """One sheet of every candidate, labelled, for picking by eye."""
-    from PIL import Image, ImageDraw
-
-    gap = 16
-    rows = (len(images) + cols - 1) // cols
-    sheet = Image.new("RGB", (cols * cell, rows * (cell + gap)), (30, 30, 34))
-    draw = ImageDraw.Draw(sheet)
-    for i, (img, label) in enumerate(zip(images, labels)):
-        flat = Image.new("RGBA", img.size, (255, 255, 255, 255))
-        thumb = Image.alpha_composite(flat, img).convert("RGB")
-        thumb.thumbnail((cell, cell), Image.NEAREST)
-        r, c = divmod(i, cols)
-        sheet.paste(thumb, (c * cell + (cell - thumb.width) // 2, r * (cell + gap)))
-        draw.text((c * cell + 3, r * (cell + gap) + cell + 2), label, fill=(210, 210, 215))
-    return sheet
-
-
 def cmd_chunks(args):
     data = open(args.src, "rb").read()
+    evidence = {}
     if args.try_palettes:
         candidates = _candidate_palettes(args.try_palettes)
         if not candidates:
             print(f"no complete palettes in {args.try_palettes}", file=sys.stderr)
             return 2
         print(f"{len(candidates)} candidate palettes from {args.try_palettes}")
+        if os.path.basename(args.src).upper() == extract_mod.GRAPHICS_FILE:
+            evidence = extract_mod.gensei.candidates(open(args.try_palettes, "rb").read(), data)
     else:
         candidates = None
     pal = _parse_palette_arg(args.palette) if args.palette else tilesheet.DEFAULT_PALETTE
@@ -223,7 +196,11 @@ def cmd_chunks(args):
                 # lives in the interpreter's control flow. So render them
                 # all and let a human pick, then pass it back via --palette.
                 shots, labels = [], []
+                narrowed = extract_mod.gensei.distinct(
+                    evidence, extract_mod.gensei.DISK_GRAPHICS, index)
                 for n, cand in enumerate(candidates):
+                    if narrowed and cand not in narrowed:
+                        continue
                     img, _ = _render_chunk(raw, list(cand))
                     if img is None:
                         continue
@@ -234,7 +211,7 @@ def cmd_chunks(args):
                     skipped.append((index, why))
                     continue
                 os.makedirs(args.dest, exist_ok=True)
-                _contact_sheet(shots, labels).save(stem + "_palettes.png")
+                contact_sheet(shots, labels).save(stem + "_palettes.png")
                 print(f"  chunk {index:3d} {len(shots)} candidates "
                       f"-> c{index:02d}_palettes.png")
             else:
@@ -302,7 +279,7 @@ def _map_grid(dec):
 
 def _render_file(raw, pal, mask):
     if gcs14.is_gcs14(raw):
-        img = _bitmap_image(gcs14.parse(raw, pal))
+        img = to_pil(gcs14.parse(raw, pal))
         return img, "gcs v1.4 screen 640x400"
     parts, end = pc98lz.streams(raw)
     if len(parts) != 1 or end != len(raw):
@@ -433,8 +410,9 @@ def main(argv=None):
     p.add_argument("--palette", help='16 RGB triples, "r,g,b,r,g,b,..." '
                                      "(default: the engine's most common one)")
     p.add_argument("--try-palettes", metavar="DISK_B.DAT",
-                   help="render each chunk under every palette in that file, as "
-                        "one contact sheet to pick from by eye")
+                   help="render each chunk under the palettes in that file, as one "
+                        "contact sheet to pick from by eye; for a DISK_C.DAT only the "
+                        "palettes its scripts apply near its load, when they show any")
     p.set_defaults(func=cmd_chunks)
 
     p = sub.add_parser("palettes",
